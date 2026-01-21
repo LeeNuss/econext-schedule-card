@@ -1,0 +1,22 @@
+{
+  "name": "econet-schedule-card",
+  "version": "1.0.0",
+  "description": "Home Assistant Lovelace card for ecoNET-300 weekly schedules",
+  "main": "dist/econet-schedule-card.js",
+  "type": "module",
+  "scripts": {
+    "build": "rollup -c",
+    "watch": "rollup -c -w"
+  },
+  "devDependencies": {
+    "@rollup/plugin-node-resolve": "^15.2.3",
+    "@rollup/plugin-terser": "^0.4.4",
+    "@rollup/plugin-typescript": "^11.1.6",
+    "rollup": "^4.9.6",
+    "tslib": "^2.6.2",
+    "typescript": "^5.3.3"
+  },
+  "dependencies": {
+    "lit": "^3.1.2"
+  }
+}
