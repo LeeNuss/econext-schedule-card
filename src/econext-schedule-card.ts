@@ -1,4 +1,4 @@
-import { LitElement, html, nothing, type CSSResultGroup, type TemplateResult } from 'lit';
+import { LitElement, html, nothing, type CSSResultGroup, type PropertyValues, type TemplateResult } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { classMap } from 'lit/directives/class-map.js';
 import { styleMap } from 'lit/directives/style-map.js';
@@ -25,14 +25,17 @@ import {
 
 import { cardStyles } from './styles';
 
-const HOURS = 24;
-
 @customElement('econext-schedule-card')
 export class EconextScheduleCard extends LitElement {
   @property({ attribute: false }) public hass!: HomeAssistant;
 
   @state() private _config?: EconextScheduleCardConfig;
   @state() private _selectedDay: DayKey = getCurrentDay();
+  @state() private _pendingValues: Map<string, number> = new Map();
+
+  private _debounceTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
+
+  private static readonly DEBOUNCE_MS = 500;
 
   static get styles(): CSSResultGroup {
     return cardStyles;
@@ -84,11 +87,17 @@ export class EconextScheduleCard extends LitElement {
     return isNaN(value) ? null : value;
   }
 
+  private _getEffectiveValue(entityId: string): number | null {
+    const pending = this._pendingValues.get(entityId);
+    if (pending !== undefined) return pending;
+    return this._getEntityValue(entityId);
+  }
+
   private _buildDaySchedule(day: DayKey): DaySchedule | null {
     const amEntityId = this._getEntityId(day, 'am');
     const pmEntityId = this._getEntityId(day, 'pm');
-    const amValue = this._getEntityValue(amEntityId);
-    const pmValue = this._getEntityValue(pmEntityId);
+    const amValue = this._getEffectiveValue(amEntityId);
+    const pmValue = this._getEffectiveValue(pmEntityId);
 
     if (amValue === null || pmValue === null) {
       return null;
@@ -104,30 +113,87 @@ export class EconextScheduleCard extends LitElement {
     };
   }
 
-  private async _handleCellClick(
-    day: DayKey,
-    slotIndex: number,
-    _currentValue: boolean
-  ): Promise<void> {
+  private _handleCellClick(day: DayKey, slotIndex: number): void {
     if (!this._config?.editable || !this.hass) return;
 
     const isAm = isAmSlot(slotIndex);
     const bitIndex = slotToBitIndex(slotIndex);
     const entityId = this._getEntityId(day, isAm ? 'am' : 'pm');
 
-    const currentBitfield = this._getEntityValue(entityId);
+    const currentBitfield = this._pendingValues.get(entityId) ?? this._getEntityValue(entityId);
     if (currentBitfield === null) return;
 
     const newValue = toggleBit(currentBitfield, bitIndex);
 
+    this._pendingValues = new Map(this._pendingValues);
+    this._pendingValues.set(entityId, newValue);
+
+    this._scheduleSend(entityId);
+  }
+
+  private _scheduleSend(entityId: string): void {
+    const existing = this._debounceTimers.get(entityId);
+    if (existing !== undefined) {
+      clearTimeout(existing);
+    }
+
+    const timer = setTimeout(() => {
+      this._flushEntity(entityId);
+    }, EconextScheduleCard.DEBOUNCE_MS);
+
+    this._debounceTimers.set(entityId, timer);
+  }
+
+  private async _flushEntity(entityId: string): Promise<void> {
+    this._debounceTimers.delete(entityId);
+
+    const value = this._pendingValues.get(entityId);
+    if (value === undefined) return;
+
     try {
       await this.hass.callService('number', 'set_value', {
         entity_id: entityId,
-        value: newValue,
+        value,
       });
     } catch (error) {
       console.error('Failed to update schedule:', error);
+      // Revert optimistic state on failure
+      const updated = new Map(this._pendingValues);
+      updated.delete(entityId);
+      this._pendingValues = updated;
     }
+  }
+
+  protected override willUpdate(changedProperties: PropertyValues): void {
+    super.willUpdate(changedProperties);
+
+    // When hass state updates, clear pending values that HA has confirmed
+    if (changedProperties.has('hass') && this._pendingValues.size > 0) {
+      const toRemove: string[] = [];
+      for (const [entityId, pendingValue] of this._pendingValues) {
+        if (!this._debounceTimers.has(entityId)) {
+          const haValue = this._getEntityValue(entityId);
+          if (haValue === pendingValue) {
+            toRemove.push(entityId);
+          }
+        }
+      }
+      if (toRemove.length > 0) {
+        const updated = new Map(this._pendingValues);
+        for (const id of toRemove) {
+          updated.delete(id);
+        }
+        this._pendingValues = updated;
+      }
+    }
+  }
+
+  override disconnectedCallback(): void {
+    super.disconnectedCallback();
+    for (const timer of this._debounceTimers.values()) {
+      clearTimeout(timer);
+    }
+    this._debounceTimers.clear();
   }
 
   protected render(): TemplateResult {
@@ -252,7 +318,7 @@ export class EconextScheduleCard extends LitElement {
               })}
               title="${slotToTime(slotIndex)} - ${active ? 'Active' : 'Inactive'}"
               @click=${() =>
-                this._handleCellClick(daySchedule.day, slotIndex, active)}
+                this._handleCellClick(daySchedule.day, slotIndex)}
             ></div>
           `;
         })}
