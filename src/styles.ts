@@ -169,6 +169,26 @@ export const cardStyles = css`
     text-align: center;
   }
 
+  .error-banner {
+    padding: 8px 12px;
+    margin-bottom: 12px;
+    background-color: var(--error-color, #db4437);
+    color: #fff;
+    border-radius: var(--border-radius);
+    font-size: 13px;
+    text-align: center;
+    animation: fade-in 0.2s ease;
+  }
+
+  @keyframes fade-in {
+    from { opacity: 0; transform: translateY(-4px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .day-tab.error {
+    color: var(--error-color, #db4437);
+  }
+
   /* Mobile responsiveness */
   @media (max-width: 600px) {
     :host {

@@ -32,10 +32,16 @@ export class EconextScheduleCard extends LitElement {
   @state() private _config?: EconextScheduleCardConfig;
   @state() private _selectedDay: DayKey = getCurrentDay();
   @state() private _pendingValues: Map<string, number> = new Map();
+  @state() private _errorEntityIds: Set<string> = new Set();
 
   private _debounceTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
+  private _sendQueue: string[] = [];
+  private _queueProcessing = false;
 
   private static readonly DEBOUNCE_MS = 500;
+  private static readonly MAX_RETRIES = 2;
+  private static readonly RETRY_BASE_MS = 1000;
+  private static readonly INTER_CALL_DELAY_MS = 3000;
 
   static get styles(): CSSResultGroup {
     return cardStyles;
@@ -138,30 +144,103 @@ export class EconextScheduleCard extends LitElement {
     }
 
     const timer = setTimeout(() => {
-      this._flushEntity(entityId);
+      this._enqueueFlush(entityId);
     }, EconextScheduleCard.DEBOUNCE_MS);
 
     this._debounceTimers.set(entityId, timer);
   }
 
-  private async _flushEntity(entityId: string): Promise<void> {
+  private _enqueueFlush(entityId: string): void {
     this._debounceTimers.delete(entityId);
 
     const value = this._pendingValues.get(entityId);
     if (value === undefined) return;
 
-    try {
-      await this.hass.callService('number', 'set_value', {
-        entity_id: entityId,
-        value,
-      });
-    } catch (error) {
-      console.error('Failed to update schedule:', error);
-      // Revert optimistic state on failure
-      const updated = new Map(this._pendingValues);
-      updated.delete(entityId);
-      this._pendingValues = updated;
+    if (!this._sendQueue.includes(entityId)) {
+      this._sendQueue.push(entityId);
     }
+
+    this._processQueue();
+  }
+
+  private async _processQueue(): Promise<void> {
+    if (this._queueProcessing) return;
+    this._queueProcessing = true;
+
+    try {
+      while (this._sendQueue.length > 0) {
+        const entityId = this._sendQueue[0];
+        const value = this._pendingValues.get(entityId);
+
+        if (value === undefined) {
+          this._sendQueue.shift();
+          continue;
+        }
+
+        const success = await this._executeServiceCall(entityId, value);
+
+        if (!success) {
+          const updated = new Map(this._pendingValues);
+          updated.delete(entityId);
+          this._pendingValues = updated;
+          this._showError(entityId);
+        }
+
+        this._sendQueue.shift();
+
+        // Wait between calls to let the controller finish processing
+        if (success && this._sendQueue.length > 0) {
+          await new Promise<void>(resolve =>
+            setTimeout(resolve, EconextScheduleCard.INTER_CALL_DELAY_MS)
+          );
+        }
+      }
+    } finally {
+      this._queueProcessing = false;
+    }
+  }
+
+  private async _executeServiceCall(entityId: string, value: number): Promise<boolean> {
+    for (let attempt = 0; attempt <= EconextScheduleCard.MAX_RETRIES; attempt++) {
+      try {
+        await this.hass.callService('number', 'set_value', {
+          entity_id: entityId,
+          value,
+        });
+        return true;
+      } catch (error) {
+        console.error(
+          `Failed to update ${entityId} (attempt ${attempt + 1}/${EconextScheduleCard.MAX_RETRIES + 1}):`,
+          error
+        );
+
+        if (attempt < EconextScheduleCard.MAX_RETRIES) {
+          const delay = EconextScheduleCard.RETRY_BASE_MS * Math.pow(2, attempt);
+          await new Promise<void>(resolve => setTimeout(resolve, delay));
+
+          const latestValue = this._pendingValues.get(entityId);
+          if (latestValue === undefined) return true;
+          value = latestValue;
+        }
+      }
+    }
+    return false;
+  }
+
+  private _showError(entityId: string): void {
+    this._errorEntityIds = new Set([...this._errorEntityIds, entityId]);
+
+    setTimeout(() => {
+      const updated = new Set(this._errorEntityIds);
+      updated.delete(entityId);
+      this._errorEntityIds = updated;
+    }, 5000);
+  }
+
+  private _hasErrorForDay(day: DayKey): boolean {
+    const amId = this._getEntityId(day, 'am');
+    const pmId = this._getEntityId(day, 'pm');
+    return this._errorEntityIds.has(amId) || this._errorEntityIds.has(pmId);
   }
 
   protected override willUpdate(changedProperties: PropertyValues): void {
@@ -194,6 +273,7 @@ export class EconextScheduleCard extends LitElement {
       clearTimeout(timer);
     }
     this._debounceTimers.clear();
+    this._sendQueue = [];
   }
 
   protected render(): TemplateResult {
@@ -241,6 +321,7 @@ export class EconextScheduleCard extends LitElement {
               class="day-tab ${classMap({
                 active: day === this._selectedDay,
                 'current-day': this._config!.highlight_current_day !== false && day === currentDay,
+                error: this._hasErrorForDay(day),
               })}"
               @click=${() => { this._selectedDay = day; }}
             >
@@ -248,6 +329,14 @@ export class EconextScheduleCard extends LitElement {
             </button>
           `)}
         </div>
+
+        ${this._hasErrorForDay(this._selectedDay)
+          ? html`
+              <div class="error-banner">
+                Failed to save schedule. Changes were reverted.
+              </div>
+            `
+          : nothing}
 
         <!-- Schedule row -->
         <div class="schedule-container">
