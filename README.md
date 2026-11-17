@@ -1,3 +1,5 @@
+![ecoNEXT Schedule Card icon](assets/icon.png)
+
 # ecoNEXT Schedule Card
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
