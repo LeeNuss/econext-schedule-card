@@ -109,11 +109,11 @@ show_copy_controls: true
 Set `show_copy_controls: true` to show a small toolbar above the schedule.
 The selected day tab is the source day. **All days**, **Weekdays**, and
 **Weekend** copy actions automatically exclude that source day and only write
-AM/PM entities whose value would change. All changed values are sent at once;
-the ecoNEXT integration combines writes that arrive together into a single
-gateway batch, so copying to the whole week takes a few seconds. Older
-integration or gateway versions without batch writes still work, one value at
-a time.
+AM/PM entities whose value would change. With an ecoNEXT integration that
+supports batch writes, all changed values are sent at once and reach the
+controller as a single gateway batch, so copying to the whole week takes a few
+seconds. With older integration or gateway versions the card sends the values
+one at a time, which works the same but takes longer (a few seconds per day).
 
 ### Weekly Layout
 

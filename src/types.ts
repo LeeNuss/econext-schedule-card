@@ -10,6 +10,7 @@ export interface HomeAssistant {
     service: string,
     data?: Record<string, unknown>
   ): Promise<void>;
+  callWS<T>(message: { type: string; [key: string]: unknown }): Promise<T>;
   locale: {
     language: string;
     first_weekday?: string;

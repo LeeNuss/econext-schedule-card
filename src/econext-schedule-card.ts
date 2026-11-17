@@ -50,6 +50,7 @@ export class EconextScheduleCard extends LitElement {
   @state() private _inFlight: Set<string> = new Set();
 
   private _debounceTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
+  private _batchWrites?: Promise<boolean>;
 
   private static readonly DEBOUNCE_MS = 500;
   private static readonly MAX_RETRIES = 2;
@@ -210,13 +211,39 @@ export class EconextScheduleCard extends LitElement {
     if (entityIdsToSend.length === 0) return;
 
     this._pendingValues = pending;
-    // Send every value at once. The ecoNEXT integration coalesces service
-    // calls that arrive together into one gateway batch (one bus token
-    // hold), so a full-week copy takes a few seconds rather than one token
-    // wait per value.
-    for (const entityId of entityIdsToSend) {
-      this._flush(entityId);
+    void this._sendCopy(entityIdsToSend);
+  }
+
+  private async _sendCopy(entityIds: string[]): Promise<void> {
+    if (await this._supportsBatchWrites()) {
+      // The integration coalesces service calls that arrive together into
+      // one gateway batch (one bus token hold), so send everything at once.
+      for (const entityId of entityIds) {
+        this._flush(entityId);
+      }
+      return;
     }
+
+    // Older integration: concurrent calls would each wait for their own bus
+    // token and the last ones could hit its HTTP timeout, so send them one
+    // at a time instead.
+    for (const entityId of entityIds) {
+      this._cancelDebounce(entityId);
+      if (this._inFlight.has(entityId)) continue;
+      await this._send(entityId);
+    }
+  }
+
+  /** Whether the integration batches concurrent writes (econext/info, cached). */
+  private _supportsBatchWrites(): Promise<boolean> {
+    if (!this._batchWrites) {
+      this._batchWrites = this.hass
+        .callWS<{ batch_writes?: boolean }>({ type: 'econext/info' })
+        .then(info => info?.batch_writes === true)
+        // Unknown command: an integration from before batch writes.
+        .catch(() => false);
+    }
+    return this._batchWrites;
   }
 
   private _scheduleSend(entityId: string): void {
@@ -229,13 +256,17 @@ export class EconextScheduleCard extends LitElement {
     this._debounceTimers.set(entityId, timer);
   }
 
-  /** Send an entity's pending value now, cancelling any debounce. */
-  private _flush(entityId: string): void {
+  private _cancelDebounce(entityId: string): void {
     const timer = this._debounceTimers.get(entityId);
     if (timer !== undefined) {
       clearTimeout(timer);
       this._debounceTimers.delete(entityId);
     }
+  }
+
+  /** Send an entity's pending value now, cancelling any debounce. */
+  private _flush(entityId: string): void {
+    this._cancelDebounce(entityId);
     // A write already on its way re-checks the pending value when it
     // finishes and sends again if it changed, so never run two at once.
     if (this._inFlight.has(entityId)) return;
