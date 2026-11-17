@@ -2,6 +2,7 @@ import { LitElement, css, html, type TemplateResult } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 
 import type { EconextScheduleCardConfig, HomeAssistant } from './types';
+import { describePrefix, findSchedulePrefixes } from './discovery';
 
 type FormValueChangedEvent = CustomEvent<{ value: Partial<EconextScheduleCardConfig> }>;
 
@@ -35,7 +36,7 @@ export class EconextScheduleCardEditor extends LitElement {
       <ha-form
         .hass=${this.hass}
         .data=${this._formData}
-        .schema=${EDITOR_SCHEMA}
+        .schema=${this._schema()}
         .computeLabel=${this._computeLabel}
         @value-changed=${this._valueChanged}
       ></ha-form>
@@ -62,6 +63,32 @@ export class EconextScheduleCardEditor extends LitElement {
       margin-top: 16px;
     }
   `;
+
+  /** Offer the schedules found in HA as a dropdown; any prefix can still be typed. */
+  private _schema() {
+    const prefixes = findSchedulePrefixes(this.hass);
+    const current = this._config.schedule_entity_prefix;
+    if (current && !prefixes.includes(current)) prefixes.unshift(current);
+    if (prefixes.length === 0) return EDITOR_SCHEMA;
+
+    return [
+      {
+        name: 'schedule_entity_prefix',
+        required: true,
+        selector: {
+          select: {
+            mode: 'dropdown',
+            custom_value: true,
+            options: prefixes.map(prefix => ({
+              value: prefix,
+              label: `${describePrefix(this.hass, prefix)} (${prefix})`,
+            })),
+          },
+        },
+      },
+      ...EDITOR_SCHEMA.slice(1),
+    ];
+  }
 
   private _computeLabel = (schema: { name: string }): string => EDITOR_LABELS[schema.name] ?? schema.name;
 

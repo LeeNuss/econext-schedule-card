@@ -24,6 +24,7 @@ import {
 } from './constants';
 
 import { cardStyles } from './styles';
+import { describePrefix, findSchedulePrefixes } from './discovery';
 
 @customElement('econext-schedule-card')
 export class EconextScheduleCard extends LitElement {
@@ -89,10 +90,12 @@ export class EconextScheduleCard extends LitElement {
     };
   }
 
-  public static getStubConfig(): Partial<EconextScheduleCardConfig> {
+  public static getStubConfig(hass?: HomeAssistant): Partial<EconextScheduleCardConfig> {
+    // Point the card picker preview at a schedule that actually exists.
+    const prefix = findSchedulePrefixes(hass)[0];
     return {
-      schedule_entity_prefix: 'number.econext_dhw_schedule',
-      title: 'Schedule',
+      schedule_entity_prefix: prefix ?? 'number.econext_dhw_schedule',
+      title: prefix ? describePrefix(hass, prefix) : 'Schedule',
     };
   }
 
