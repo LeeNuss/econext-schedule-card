@@ -2,6 +2,7 @@ import { LitElement, html, nothing, type CSSResultGroup, type PropertyValues, ty
 import { customElement, property, state } from 'lit/decorators.js';
 import { classMap } from 'lit/directives/class-map.js';
 import { styleMap } from 'lit/directives/style-map.js';
+import { live } from 'lit/directives/live.js';
 
 import type {
   HomeAssistant,
@@ -12,6 +13,7 @@ import type {
 import { combineAmPm, toggleBit } from './bitfield';
 import {
   DAYS_ORDER,
+  displayDays,
   DAY_LABELS,
   SLOTS_PER_DAY,
   getCurrentSlotIndex,
@@ -101,6 +103,10 @@ export class EconextScheduleCard extends LitElement {
 
   public static getConfigElement(): HTMLElement {
     return document.createElement('econext-schedule-card-editor');
+  }
+
+  private _displayDays(): DayKey[] {
+    return displayDays(this.hass?.locale?.first_weekday);
   }
 
   private _getEntityId(day: DayKey, period: 'am' | 'pm'): string {
@@ -370,7 +376,7 @@ export class EconextScheduleCard extends LitElement {
         ${this._config.layout !== 'weekly'
           ? html`
               <div class="day-tabs">
-                ${DAYS_ORDER.map(day => html`
+                ${this._displayDays().map(day => html`
                   <button
                     class="day-tab ${classMap({
                       active: day === this._selectedDay,
@@ -418,7 +424,7 @@ export class EconextScheduleCard extends LitElement {
   }
 
   private _renderErrorBanner(): TemplateResult | typeof nothing {
-    const failedDays = DAYS_ORDER.filter(day => this._hasErrorForDay(day));
+    const failedDays = this._displayDays().filter(day => this._hasErrorForDay(day));
     if (failedDays.length === 0) return nothing;
     return html`
       <div class="error-banner">
@@ -434,7 +440,7 @@ export class EconextScheduleCard extends LitElement {
 
     return html`
       <div class="copy-controls" role="group" aria-label="Copy ${sourceLabel} schedule">
-        <label class="copy-label" for="copy-source">Copy from</label>
+        <label class="copy-label" for="copy-source">Copy</label>
         <select
           id="copy-source"
           class="copy-source"
@@ -442,18 +448,19 @@ export class EconextScheduleCard extends LitElement {
             this._selectedDay = (event.target as HTMLSelectElement).value as DayKey;
           }}
         >
-          ${DAYS_ORDER.map(day => html`
-            <option value=${day} ?selected=${day === this._selectedDay}>${DAY_LABELS[day]}</option>
+          ${this._displayDays().map(day => html`
+            <option value=${day} .selected=${live(day === this._selectedDay)}>${DAY_LABELS[day]}</option>
           `)}
         </select>
+        <span class="copy-label">to</span>
         <button class="copy-button" @click=${() => this._copySelectedDayTo(DAYS_ORDER)}>
-          Copy to all
+          All days
         </button>
         <button class="copy-button" @click=${() => this._copySelectedDayTo(weekdays)}>
-          Copy to weekdays
+          Weekdays
         </button>
         <button class="copy-button" @click=${() => this._copySelectedDayTo(weekend)}>
-          Copy to weekend
+          Weekend
         </button>
         ${this._inFlight.size > 0 || this._debounceTimers.size > 0
           ? html`<span class="copy-status" role="status">Saving...</span>`
@@ -473,22 +480,27 @@ export class EconextScheduleCard extends LitElement {
     const labelMode = this._config?.weekly_cell_label_mode;
     const showCellLabels = labelMode === 'state' || labelMode === 'state_icon';
     const showCellIcons = labelMode === 'icon' || labelMode === 'state_icon';
-    const gridStyle = styleMap({
-      '--weekly-grid-line-color': this._config?.grid_line_color ?? 'var(--divider-color, #e0e0e0)',
-    });
+    const gridStyle = styleMap(
+      this._config?.grid_line_color ? { '--weekly-grid-line-color': this._config.grid_line_color } : {}
+    );
     const schedules = new Map(DAYS_ORDER.map(day => [day, this._buildDaySchedule(day)]));
 
     return html`
       <div class="weekly-grid-wrapper">
-        <div class="weekly-grid" aria-label="Weekly schedule" style=${gridStyle}>
-          <div class="weekly-time-header">Time</div>
-          ${DAYS_ORDER.map(day => html`
+        <div
+          class="weekly-grid ${classMap({ labelled: showCellLabels || showCellIcons })}"
+          aria-label="Weekly schedule"
+          style=${gridStyle}
+        >
+          <div class="weekly-time-header" style="grid-row: 1; grid-column: 1"></div>
+          ${this._displayDays().map((day, dayIndex) => html`
             <button
               class="weekly-day-header ${classMap({
                 'current-day': this._config!.highlight_current_day !== false && day === currentDay,
                 'copy-source': day === this._selectedDay,
                 error: this._hasErrorForDay(day),
               })}"
+              style="grid-row: 1; grid-column: ${dayIndex + 2}"
               aria-pressed=${day === this._selectedDay ? 'true' : 'false'}
               @click=${() => { this._selectedDay = day; }}
             >
@@ -496,51 +508,66 @@ export class EconextScheduleCard extends LitElement {
             </button>
           `)}
 
-          ${Array.from({ length: SLOTS_PER_DAY }, (_, slotIndex) => html`
-            <div class="weekly-time-label">
-              ${timeLabelMode === 'all' || slotIndex % 2 === 0 ? slotToTime(slotIndex) : ''}
-            </div>
-            ${DAYS_ORDER.map(day => {
-              const schedule = schedules.get(day) ?? null;
-              const active = schedule?.slots[slotIndex] ?? false;
-              const isCurrentSlotHighlight =
-                this._config?.highlight_current_slot !== false &&
-                day === currentDay &&
-                slotIndex === currentSlot;
-              const label = active
-                ? this._config?.active_label ?? 'On'
-                : this._config?.inactive_label ?? 'Off';
-              const textColor = active
-                ? this._config?.active_text_color ?? '#ffffff'
-                : this._config?.inactive_text_color ?? '#212121';
-              const icon = active
-                ? this._config?.active_icon ?? 'mdi:weather-sunny'
-                : this._config?.inactive_icon ?? 'mdi:weather-night';
+          ${Array.from({ length: SLOTS_PER_DAY }, (_, slotIndex) => {
+            // Hour mode: one label per hour spanning both half-hour rows.
+            const label =
+              timeLabelMode === 'all'
+                ? html`<div class="weekly-time-label" style="grid-row: ${slotIndex + 2}; grid-column: 1">
+                    ${slotToTime(slotIndex)}
+                  </div>`
+                : slotIndex % 2 === 0
+                  ? html`<div class="weekly-time-label hour" style="grid-row: ${slotIndex + 2} / span 2; grid-column: 1">
+                      ${slotToTime(slotIndex)}
+                    </div>`
+                  : nothing;
 
-              return html`
-                <button
-                  class="weekly-cell ${classMap({
-                    active,
-                    inactive: !active,
-                    'current-slot': isCurrentSlotHighlight,
-                    readonly: !editable || !schedule,
-                  })}"
-                  style=${styleMap({
-                    backgroundColor: active ? activeColor : inactiveColor,
-                    color: textColor,
-                  })}
-                  title="${DAY_LABELS[day]} ${slotToTime(slotIndex)} - ${active ? 'Active' : 'Inactive'}"
-                  ?disabled=${!editable || !schedule}
-                  @click=${() => schedule && this._handleCellClick(day, slotIndex)}
-                >${showCellLabels || showCellIcons
-                  ? html`<span class="weekly-cell-content">
-                      ${showCellIcons ? html`<ha-icon .icon=${icon}></ha-icon>` : nothing}
-                      ${showCellLabels ? html`<span>${label}</span>` : nothing}
-                    </span>`
-                  : nothing}</button>
-              `;
-            })}
-          `)}
+            return html`
+              ${label}
+              ${this._displayDays().map((day, dayIndex) => {
+                const schedule = schedules.get(day) ?? null;
+                const active = schedule?.slots[slotIndex] ?? false;
+                const isCurrentSlotHighlight =
+                  this._config?.highlight_current_slot !== false &&
+                  day === currentDay &&
+                  slotIndex === currentSlot;
+                const cellLabel = active
+                  ? this._config?.active_label ?? 'On'
+                  : this._config?.inactive_label ?? 'Off';
+                const textColor = active
+                  ? this._config?.active_text_color ?? '#ffffff'
+                  : this._config?.inactive_text_color ?? '#212121';
+                const icon = active
+                  ? this._config?.active_icon ?? 'mdi:weather-sunny'
+                  : this._config?.inactive_icon ?? 'mdi:weather-night';
+
+                return html`
+                  <button
+                    class="weekly-cell ${classMap({
+                      active,
+                      inactive: !active,
+                      'hour-end': slotIndex % 2 === 1,
+                      'current-slot': isCurrentSlotHighlight,
+                      readonly: !editable || !schedule,
+                    })}"
+                    style=${styleMap({
+                      gridRow: String(slotIndex + 2),
+                      gridColumn: String(dayIndex + 2),
+                      backgroundColor: active ? activeColor : inactiveColor,
+                      color: textColor,
+                    })}
+                    title="${DAY_LABELS[day]} ${slotToTime(slotIndex)} - ${active ? 'Active' : 'Inactive'}"
+                    ?disabled=${!editable || !schedule}
+                    @click=${() => schedule && this._handleCellClick(day, slotIndex)}
+                  >${showCellLabels || showCellIcons
+                    ? html`<span class="weekly-cell-content">
+                        ${showCellIcons ? html`<ha-icon .icon=${icon}></ha-icon>` : nothing}
+                        ${showCellLabels ? html`<span>${cellLabel}</span>` : nothing}
+                      </span>`
+                    : nothing}</button>
+                `;
+              })}
+            `;
+          })}
         </div>
       </div>
     `;

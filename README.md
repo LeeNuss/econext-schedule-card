@@ -11,6 +11,7 @@ A Home Assistant Lovelace card for displaying and editing weekly schedules from 
 - Click to toggle schedule slots
 - Optional copy controls for the currently selected day (all days, weekdays, or weekend)
 - Current day highlighting
+- Week starts on the first weekday set in your Home Assistant profile (Monday by default)
 - Responsive design
 
 ## Installation

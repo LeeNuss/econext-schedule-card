@@ -12,6 +12,7 @@ export interface HomeAssistant {
   ): Promise<void>;
   locale: {
     language: string;
+    first_weekday?: string;
   };
 }
 

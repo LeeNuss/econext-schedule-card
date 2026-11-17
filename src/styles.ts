@@ -144,51 +144,43 @@ export const cardStyles = css`
     width: 100%;
   }
 
-  /* Weekly layout */
+  /* Weekly layout: the whole week fits without scrolling */
   .weekly-grid-wrapper {
-    max-height: 520px;
-    overflow: auto;
     border: 1px solid var(--divider-color, #e0e0e0);
     border-radius: var(--border-radius);
+    overflow: hidden;
   }
 
   .weekly-grid {
+    /* Lines are drawn over the cell colour, so a translucent default reads
+       on light, dark and active cells alike. */
+    --weekly-grid-line-color: rgba(0, 0, 0, 0.18);
+    --weekly-row-height: 10px;
     display: grid;
-    grid-template-columns: 54px repeat(7, minmax(40px, 1fr));
-    min-width: 520px;
+    grid-template-columns: 38px repeat(7, minmax(0, 1fr));
+    grid-template-rows: 26px repeat(48, var(--weekly-row-height));
   }
 
-  .weekly-time-header,
-  .weekly-day-header,
-  .weekly-time-label,
-  .weekly-cell {
-    box-sizing: border-box;
-    border-right: 1px solid var(--weekly-grid-line-color);
-    border-bottom: 1px solid var(--weekly-grid-line-color);
+  .weekly-grid.labelled {
+    --weekly-row-height: 20px;
   }
 
   .weekly-time-header,
   .weekly-day-header {
-    position: sticky;
-    top: 0;
-    z-index: 2;
-    min-height: 36px;
+    box-sizing: border-box;
+    height: 26px;
+    border: 0;
+    border-bottom: 1px solid var(--divider-color, #e0e0e0);
     background: var(--card-background-color);
     color: var(--primary-text-color);
+    font: inherit;
     font-size: 11px;
     font-weight: 600;
+    padding: 0;
     text-align: center;
   }
 
-  .weekly-time-header {
-    display: grid;
-    place-items: center;
-    color: var(--secondary-text-color);
-  }
-
   .weekly-day-header {
-    border-top: 0;
-    border-left: 0;
     border-radius: 0;
     cursor: pointer;
   }
@@ -196,7 +188,6 @@ export const cardStyles = css`
   .weekly-day-header.copy-source {
     background: var(--primary-color);
     color: var(--text-primary-color, #fff);
-    box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.22);
   }
 
   .weekly-day-header.error {
@@ -209,36 +200,53 @@ export const cardStyles = css`
   }
 
   .weekly-time-label {
-    min-height: 18px;
-    padding-right: 6px;
+    box-sizing: border-box;
+    border-right: 1px solid var(--divider-color, #e0e0e0);
     color: var(--secondary-text-color);
     font-size: 9px;
-    line-height: 18px;
+    line-height: var(--weekly-row-height);
+    overflow: hidden;
+    padding-right: 4px;
     text-align: right;
+    white-space: nowrap;
+  }
+
+  .weekly-time-label.hour {
+    line-height: 1;
+    padding-top: 1px;
   }
 
   .weekly-cell {
-    min-height: 22px;
+    box-sizing: border-box;
     appearance: none;
-    border-top: 0;
-    border-left: 0;
+    border: 0;
+    border-right: 1px solid var(--weekly-grid-line-color);
     cursor: pointer;
     font: inherit;
     font-size: 9px;
     font-weight: 600;
-    line-height: 20px;
+    line-height: var(--weekly-row-height);
+    min-width: 0;
     overflow: hidden;
     padding: 0 2px;
     text-align: center;
     text-transform: uppercase;
   }
 
+  .weekly-cell.hour-end {
+    border-bottom: 1px solid var(--weekly-grid-line-color);
+  }
+
+  .weekly-grid.labelled .weekly-cell {
+    border-bottom: 1px solid var(--weekly-grid-line-color);
+  }
+
   .weekly-cell ha-icon {
-    --mdc-icon-size: 14px;
+    --mdc-icon-size: 12px;
     display: inline-block;
-    height: 14px;
+    height: 12px;
     vertical-align: middle;
-    width: 14px;
+    width: 12px;
   }
 
   .weekly-cell-content {
@@ -384,31 +392,15 @@ export const cardStyles = css`
       gap: 6px;
     }
 
-    .copy-label {
-      margin-left: 0;
-    }
-
-    .copy-source {
-      flex: 1 1 auto;
-    }
-
     .copy-button {
-      flex: 1 1 30%;
       padding: 0 8px;
     }
 
     .weekly-grid {
-      grid-template-columns: 48px repeat(7, minmax(36px, 1fr));
-      min-width: 470px;
-    }
-
-    .weekly-time-label,
-    .weekly-cell {
-      min-height: 20px;
+      grid-template-columns: 32px repeat(7, minmax(0, 1fr));
     }
 
     .weekly-time-label {
-      line-height: 20px;
       font-size: 8px;
     }
 
