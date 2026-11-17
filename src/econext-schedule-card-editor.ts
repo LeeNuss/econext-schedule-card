@@ -18,25 +18,23 @@ export class EconextScheduleCardEditor extends LitElement {
   @state() private _config: Partial<EconextScheduleCardConfig> = {};
 
   public setConfig(config: EconextScheduleCardConfig): void {
-    // Mirror the card defaults so an omitted YAML property does not look
-    // switched off in the visual editor (and accidentally get saved as off).
-    this._config = {
-      layout: 'tabs',
-      editable: true,
-      show_time_labels: true,
-      highlight_current_day: true,
-      highlight_current_slot: true,
-      weekly_time_label_mode: 'hour',
-      weekly_cell_label_mode: 'none',
-      ...config,
-    };
+    this._config = { ...config };
+  }
+
+  /**
+   * The config as the form shows it: card defaults filled in so an omitted
+   * YAML property does not look switched off. Only values the user changes
+   * are written back, so the saved YAML stays minimal.
+   */
+  private get _formData(): Partial<EconextScheduleCardConfig> {
+    return { ...EDITOR_DEFAULTS, ...this._config };
   }
 
   protected render(): TemplateResult {
     return html`
       <ha-form
         .hass=${this.hass}
-        .data=${this._config}
+        .data=${this._formData}
         .schema=${EDITOR_SCHEMA}
         .computeLabel=${this._computeLabel}
         @value-changed=${this._valueChanged}
@@ -47,10 +45,10 @@ export class EconextScheduleCardEditor extends LitElement {
         ${this._config.layout === 'weekly'
           ? this._renderColourPicker('grid_line_color', 'Grid-line colour', '#e0e0e0')
           : ''}
-        ${['state', 'state_icon'].includes(this._config.weekly_cell_label_mode ?? 'none')
+        ${this._config.layout === 'weekly' && (this._config.weekly_cell_label_mode ?? 'none') !== 'none'
           ? html`
               ${this._renderColourPicker('active_text_color', 'Active text colour', '#ffffff')}
-              ${this._renderColourPicker('inactive_text_color', 'Inactive text colour', '#000000')}
+              ${this._renderColourPicker('inactive_text_color', 'Inactive text colour', '#212121')}
             `
           : ''}
       </div>
@@ -69,7 +67,19 @@ export class EconextScheduleCardEditor extends LitElement {
 
   private _valueChanged(event: FormValueChangedEvent): void {
     event.stopPropagation();
-    this._config = { ...event.detail.value };
+    const value = event.detail.value as Record<string, unknown>;
+    const shown = this._formData as Record<string, unknown>;
+    const next = { ...this._config } as Record<string, unknown>;
+
+    for (const [key, newValue] of Object.entries(value)) {
+      if (newValue === shown[key]) continue;
+      if (newValue === undefined || newValue === '') {
+        delete next[key];
+      } else {
+        next[key] = newValue;
+      }
+    }
+    this._config = next as Partial<EconextScheduleCardConfig>;
     this.dispatchEvent(
       new CustomEvent('config-changed', {
         detail: { config: this._config },
@@ -121,6 +131,22 @@ export class EconextScheduleCardEditor extends LitElement {
   }
 }
 
+const EDITOR_DEFAULTS: Partial<EconextScheduleCardConfig> = {
+  layout: 'tabs',
+  editable: true,
+  show_time_labels: true,
+  highlight_current_day: true,
+  highlight_current_slot: true,
+  weekly_time_label_mode: 'hour',
+  weekly_cell_label_mode: 'none',
+};
+
+// ha-form `visible` conditions need HA 2026.8+; older versions show every field.
+const WEEKLY_LABELS_VISIBLE = [
+  { field: 'layout', value: 'weekly' },
+  { field: 'weekly_cell_label_mode', operator: 'not_eq', value: 'none' },
+];
+
 const EDITOR_SCHEMA = [
   { name: 'schedule_entity_prefix', required: true, selector: { text: {} } },
   { name: 'title', selector: { text: {} } },
@@ -171,22 +197,10 @@ const EDITOR_SCHEMA = [
     },
     visible: { field: 'layout', value: 'weekly' },
   },
-  {
-    name: 'active_label',
-    selector: { text: {} },
-  },
-  {
-    name: 'inactive_label',
-    selector: { text: {} },
-  },
-  {
-    name: 'active_icon',
-    selector: { icon: {} },
-  },
-  {
-    name: 'inactive_icon',
-    selector: { icon: {} },
-  },
+  { name: 'active_label', selector: { text: {} }, visible: WEEKLY_LABELS_VISIBLE },
+  { name: 'inactive_label', selector: { text: {} }, visible: WEEKLY_LABELS_VISIBLE },
+  { name: 'active_icon', selector: { icon: {} }, visible: WEEKLY_LABELS_VISIBLE },
+  { name: 'inactive_icon', selector: { icon: {} }, visible: WEEKLY_LABELS_VISIBLE },
   { name: 'highlight_current_day', selector: { boolean: {} } },
   { name: 'highlight_current_slot', selector: { boolean: {} } },
 ];

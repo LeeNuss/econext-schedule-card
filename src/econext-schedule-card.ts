@@ -33,15 +33,13 @@ export class EconextScheduleCard extends LitElement {
   @state() private _selectedDay: DayKey = getCurrentDay();
   @state() private _pendingValues: Map<string, number> = new Map();
   @state() private _errorEntityIds: Set<string> = new Set();
+  @state() private _inFlight: Set<string> = new Set();
 
   private _debounceTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
-  private _sendQueue: string[] = [];
-  private _queueProcessing = false;
 
   private static readonly DEBOUNCE_MS = 500;
   private static readonly MAX_RETRIES = 2;
   private static readonly RETRY_BASE_MS = 1000;
-  private static readonly INTER_CALL_DELAY_MS = 3000;
 
   static get styles(): CSSResultGroup {
     return cardStyles;
@@ -64,11 +62,27 @@ export class EconextScheduleCard extends LitElement {
   }
 
   public getCardSize(): number {
+    if (this._config?.layout === 'weekly') {
+      // Header, copy controls and the grid (capped at 520px); 50px units
+      return 12;
+    }
     // Title + tabs + schedule row + time labels + padding
     return this._config?.title ? 4 : 3;
   }
 
+  public getGridOptions() {
+    if (this._config?.layout === 'weekly') {
+      return { columns: 12, rows: 'auto', min_columns: 6 };
+    }
+    const rows = this._config?.title ? 4 : 3;
+    return { rows, min_rows: rows };
+  }
+
   public getLayoutOptions() {
+    // Pre-2024.11 sections API
+    if (this._config?.layout === 'weekly') {
+      return { grid_columns: 4, grid_min_columns: 2, grid_rows: 'auto' };
+    }
     return {
       grid_rows: this._config?.title ? 4 : 3,
       grid_min_rows: this._config?.title ? 4 : 3,
@@ -170,8 +184,12 @@ export class EconextScheduleCard extends LitElement {
     if (entityIdsToSend.length === 0) return;
 
     this._pendingValues = pending;
+    // Send every value at once. The ecoNEXT integration coalesces service
+    // calls that arrive together into one gateway batch (one bus token
+    // hold), so a full-week copy takes a few seconds rather than one token
+    // wait per value.
     for (const entityId of entityIdsToSend) {
-      this._enqueueFlush(entityId);
+      this._flush(entityId);
     }
   }
 
@@ -181,71 +199,63 @@ export class EconextScheduleCard extends LitElement {
       clearTimeout(existing);
     }
 
-    const timer = setTimeout(() => {
-      this._enqueueFlush(entityId);
-    }, EconextScheduleCard.DEBOUNCE_MS);
-
+    const timer = setTimeout(() => this._flush(entityId), EconextScheduleCard.DEBOUNCE_MS);
     this._debounceTimers.set(entityId, timer);
   }
 
-  private _enqueueFlush(entityId: string): void {
-    this._debounceTimers.delete(entityId);
-
-    const value = this._pendingValues.get(entityId);
-    if (value === undefined) return;
-
-    if (!this._sendQueue.includes(entityId)) {
-      this._sendQueue.push(entityId);
+  /** Send an entity's pending value now, cancelling any debounce. */
+  private _flush(entityId: string): void {
+    const timer = this._debounceTimers.get(entityId);
+    if (timer !== undefined) {
+      clearTimeout(timer);
+      this._debounceTimers.delete(entityId);
     }
-
-    this._processQueue();
+    // A write already on its way re-checks the pending value when it
+    // finishes and sends again if it changed, so never run two at once.
+    if (this._inFlight.has(entityId)) return;
+    void this._send(entityId);
   }
 
-  private async _processQueue(): Promise<void> {
-    if (this._queueProcessing) return;
-    this._queueProcessing = true;
+  private async _send(entityId: string): Promise<void> {
+    let value = this._pendingValues.get(entityId);
+    if (value === undefined) return;
 
+    this._inFlight = new Set([...this._inFlight, entityId]);
     try {
-      while (this._sendQueue.length > 0) {
-        const entityId = this._sendQueue[0];
-        const value = this._pendingValues.get(entityId);
-
-        if (value === undefined) {
-          this._sendQueue.shift();
-          continue;
-        }
-
-        const success = await this._executeServiceCall(entityId, value);
-
-        if (!success) {
+      for (;;) {
+        const sent = await this._executeServiceCall(entityId, value);
+        if (sent === null) {
           const updated = new Map(this._pendingValues);
           updated.delete(entityId);
           this._pendingValues = updated;
           this._showError(entityId);
+          return;
         }
 
-        this._sendQueue.shift();
-
-        // Wait between calls to let the controller finish processing
-        if (success && this._sendQueue.length > 0) {
-          await new Promise<void>(resolve =>
-            setTimeout(resolve, EconextScheduleCard.INTER_CALL_DELAY_MS)
-          );
+        // Edited again while this write was running: send the newer value,
+        // unless a debounce timer is about to do that.
+        const latest = this._pendingValues.get(entityId);
+        if (latest === undefined || latest === sent || this._debounceTimers.has(entityId)) {
+          return;
         }
+        value = latest;
       }
     } finally {
-      this._queueProcessing = false;
+      const inFlight = new Set(this._inFlight);
+      inFlight.delete(entityId);
+      this._inFlight = inFlight;
     }
   }
 
-  private async _executeServiceCall(entityId: string, value: number): Promise<boolean> {
+  /** Call number.set_value with retries; resolves to the value sent, or null on failure. */
+  private async _executeServiceCall(entityId: string, value: number): Promise<number | null> {
     for (let attempt = 0; attempt <= EconextScheduleCard.MAX_RETRIES; attempt++) {
       try {
         await this.hass.callService('number', 'set_value', {
           entity_id: entityId,
           value,
         });
-        return true;
+        return value;
       } catch (error) {
         console.error(
           `Failed to update ${entityId} (attempt ${attempt + 1}/${EconextScheduleCard.MAX_RETRIES + 1}):`,
@@ -256,13 +266,14 @@ export class EconextScheduleCard extends LitElement {
           const delay = EconextScheduleCard.RETRY_BASE_MS * Math.pow(2, attempt);
           await new Promise<void>(resolve => setTimeout(resolve, delay));
 
+          // Cleared means Home Assistant already reports the value.
           const latestValue = this._pendingValues.get(entityId);
-          if (latestValue === undefined) return true;
+          if (latestValue === undefined) return value;
           value = latestValue;
         }
       }
     }
-    return false;
+    return null;
   }
 
   private _showError(entityId: string): void {
@@ -307,11 +318,12 @@ export class EconextScheduleCard extends LitElement {
 
   override disconnectedCallback(): void {
     super.disconnectedCallback();
-    for (const timer of this._debounceTimers.values()) {
-      clearTimeout(timer);
+    // Send edits still waiting on their debounce instead of dropping them.
+    // Service calls already sent run to completion in Home Assistant even
+    // after the card is gone.
+    for (const entityId of [...this._debounceTimers.keys()]) {
+      this._flush(entityId);
     }
-    this._debounceTimers.clear();
-    this._sendQueue = [];
   }
 
   protected render(): TemplateResult {
@@ -371,13 +383,7 @@ export class EconextScheduleCard extends LitElement {
             `
           : nothing}
 
-        ${this._hasErrorForDay(this._selectedDay)
-          ? html`
-              <div class="error-banner">
-                Failed to save schedule. Changes were reverted.
-              </div>
-            `
-          : nothing}
+        ${this._renderErrorBanner()}
 
         ${this._config.show_copy_controls && this._config.editable !== false
           ? this._renderCopyControls()
@@ -405,6 +411,16 @@ export class EconextScheduleCard extends LitElement {
               </div>
             `}
       </ha-card>
+    `;
+  }
+
+  private _renderErrorBanner(): TemplateResult | typeof nothing {
+    const failedDays = DAYS_ORDER.filter(day => this._hasErrorForDay(day));
+    if (failedDays.length === 0) return nothing;
+    return html`
+      <div class="error-banner">
+        Failed to save ${failedDays.map(day => DAY_LABELS[day]).join(', ')}. Changes were reverted.
+      </div>
     `;
   }
 
@@ -436,6 +452,9 @@ export class EconextScheduleCard extends LitElement {
         <button class="copy-button" @click=${() => this._copySelectedDayTo(weekend)}>
           Copy to weekend
         </button>
+        ${this._inFlight.size > 0 || this._debounceTimers.size > 0
+          ? html`<span class="copy-status" role="status">Saving...</span>`
+          : nothing}
       </div>
     `;
   }
@@ -454,16 +473,18 @@ export class EconextScheduleCard extends LitElement {
     const gridStyle = styleMap({
       '--weekly-grid-line-color': this._config?.grid_line_color ?? 'var(--divider-color, #e0e0e0)',
     });
+    const schedules = new Map(DAYS_ORDER.map(day => [day, this._buildDaySchedule(day)]));
 
     return html`
       <div class="weekly-grid-wrapper">
-        <div class="weekly-grid" role="grid" aria-label="Weekly schedule" style=${gridStyle}>
+        <div class="weekly-grid" aria-label="Weekly schedule" style=${gridStyle}>
           <div class="weekly-time-header">Time</div>
           ${DAYS_ORDER.map(day => html`
             <button
               class="weekly-day-header ${classMap({
                 'current-day': this._config!.highlight_current_day !== false && day === currentDay,
                 'copy-source': day === this._selectedDay,
+                error: this._hasErrorForDay(day),
               })}"
               aria-pressed=${day === this._selectedDay ? 'true' : 'false'}
               @click=${() => { this._selectedDay = day; }}
@@ -477,7 +498,7 @@ export class EconextScheduleCard extends LitElement {
               ${timeLabelMode === 'all' || slotIndex % 2 === 0 ? slotToTime(slotIndex) : ''}
             </div>
             ${DAYS_ORDER.map(day => {
-              const schedule = this._buildDaySchedule(day);
+              const schedule = schedules.get(day) ?? null;
               const active = schedule?.slots[slotIndex] ?? false;
               const isCurrentSlotHighlight =
                 this._config?.highlight_current_slot !== false &&
@@ -488,7 +509,7 @@ export class EconextScheduleCard extends LitElement {
                 : this._config?.inactive_label ?? 'Off';
               const textColor = active
                 ? this._config?.active_text_color ?? '#ffffff'
-                : this._config?.inactive_text_color ?? 'var(--primary-text-color)';
+                : this._config?.inactive_text_color ?? '#212121';
               const icon = active
                 ? this._config?.active_icon ?? 'mdi:weather-sunny'
                 : this._config?.inactive_icon ?? 'mdi:weather-night';

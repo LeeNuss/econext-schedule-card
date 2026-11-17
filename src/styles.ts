@@ -125,6 +125,11 @@ export const cardStyles = css`
     padding: 0 12px;
   }
 
+  .copy-status {
+    color: var(--secondary-text-color);
+    font-size: 13px;
+  }
+
   .copy-button:hover {
     filter: brightness(1.08);
   }
@@ -192,6 +197,10 @@ export const cardStyles = css`
     background: var(--primary-color);
     color: var(--text-primary-color, #fff);
     box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.22);
+  }
+
+  .weekly-day-header.error {
+    box-shadow: inset 0 -3px 0 var(--error-color, #db4437);
   }
 
   .weekly-day-header.current-day:not(.copy-source) {

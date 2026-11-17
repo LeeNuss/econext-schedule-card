@@ -63,7 +63,7 @@ The card automatically discovers entities based on the prefix pattern:
 | `grid_line_color` | string | theme divider | Colour for weekly-grid lines |
 | `active_label` / `inactive_label` | string | `On` / `Off` | State text used when `weekly_cell_label_mode: state` |
 | `active_icon` / `inactive_icon` | string | sun / moon | MDI icons used when `weekly_cell_label_mode: icon` |
-| `active_text_color` / `inactive_text_color` | string | white / theme text | Text colours for labelled cells |
+| `active_text_color` / `inactive_text_color` | string | white / dark grey | Text colours for labelled cells |
 | `show_copy_controls` | boolean | `false` | Show controls to copy the selected day's schedule |
 
 All options are also available in Home Assistant's visual card editor. Colour
@@ -93,8 +93,11 @@ show_copy_controls: true
 Set `show_copy_controls: true` to show a small toolbar above the schedule.
 The selected day tab is the source day. **All days**, **Weekdays**, and
 **Weekend** copy actions automatically exclude that source day and only write
-AM/PM entities whose value would change. Writes use the card's existing serial
-queue so the ecoNEXT gateway is not sent concurrent requests.
+AM/PM entities whose value would change. All changed values are sent at once;
+the ecoNEXT integration combines writes that arrive together into a single
+gateway batch, so copying to the whole week takes a few seconds. Older
+integration or gateway versions without batch writes still work, one value at
+a time.
 
 ### Weekly Layout
 
