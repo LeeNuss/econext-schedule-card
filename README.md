@@ -67,10 +67,11 @@ naming.
 | `schedule_entity_prefix` | string | *required* | Entity prefix (e.g., `number.dhw_dhw_schedule`) |
 | `title` | string | none | Card title |
 | `layout` | string | `tabs` | `tabs` for one selected day, or `weekly` for a seven-day grid |
-| `weekly_time_label_mode` | string | `hour` | In weekly layout, show `hour` labels or `all` half-hour labels |
-| `weekly_cell_label_mode` | string | `none` | Use `state` for text, `icon` for an icon, or `state_icon` for both in every grid cell |
+| `weekly_orientation` | string | `wide` | Weekly grid shape: `wide` (days as rows, compact) or `tall` (days as columns) |
+| `weekly_time_label_mode` | string | `hour` | Tall weekly grid: show `hour` labels or `all` half-hour labels |
+| `weekly_cell_label_mode` | string | `none` | Tall weekly grid: `state` for text, `icon` for an icon, or `state_icon` for both in every cell |
 | `editable` | boolean | `true` | Allow clicking cells to toggle slots |
-| `show_time_labels` | boolean | `true` | Show hour labels below the schedule |
+| `show_time_labels` | boolean | `true` | Show hour labels below the schedule (tabs and wide weekly grid) |
 | `highlight_current_day` | boolean | `true` | Highlight today's tab |
 | `highlight_current_slot` | boolean | `true` | Highlight current 30-min slot |
 | `active_color` | string | `#00bcd4` | Color for active slots |
@@ -117,14 +118,24 @@ a time.
 ### Weekly Layout
 
 Use the weekly layout when you want to see the whole programme at once. Click
-a day heading to make it the copy source, or choose it from the **Copy from**
-menu. The grid remains horizontally scrollable on small screens.
+a day heading to make it the copy source, or choose it from the **Copy** menu.
+
+The grid comes in two shapes, both sized to fit the card without scrolling:
+
+- `wide` (default): one row per day with the 48 half-hour slots running
+  across, like the tabs layout shown for every day at once. About 190px tall.
+- `tall`: one column per day with time running down. Taller, but the cells
+  are large enough for state labels and icons.
+
+The labelled example below needs `weekly_orientation: tall`; cell labels and
+icons are ignored in the wide grid.
 
 ```yaml
 type: custom:econext-schedule-card
 schedule_entity_prefix: number.circuit_1_schedule
 title: "Underfloor Heating"
 layout: weekly
+weekly_orientation: tall
 show_copy_controls: true
 weekly_time_label_mode: hour
 weekly_cell_label_mode: state_icon
@@ -137,7 +148,7 @@ inactive_color: "#4b5563"
 grid_line_color: "#6b7280"
 ```
 
-Set `weekly_time_label_mode: all` when every half-hour slot needs its own
+In the tall grid, set `weekly_time_label_mode: all` when every half-hour slot needs its own
 time label; `hour` keeps the grid more compact by labelling whole hours only.
 Set `weekly_cell_label_mode` to `none`, `state`, `icon`, or `state_icon` to
 choose the cell content. Labels, icons, colours, and text colours are all
@@ -154,6 +165,7 @@ schedule_entity_prefix: number.heat_pump_heat_pump_schedule
 title: "Heat Pump"
 layout: weekly
 editable: false
+weekly_orientation: tall
 weekly_time_label_mode: all
 weekly_cell_label_mode: icon
 active_icon: mdi:power

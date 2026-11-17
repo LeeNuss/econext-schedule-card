@@ -46,7 +46,9 @@ export class EconextScheduleCardEditor extends LitElement {
         ${this._config.layout === 'weekly'
           ? this._renderColourPicker('grid_line_color', 'Grid-line colour', '#e0e0e0')
           : ''}
-        ${this._config.layout === 'weekly' && (this._config.weekly_cell_label_mode ?? 'none') !== 'none'
+        ${this._config.layout === 'weekly' &&
+        this._config.weekly_orientation === 'tall' &&
+        (this._config.weekly_cell_label_mode ?? 'none') !== 'none'
           ? html`
               ${this._renderColourPicker('active_text_color', 'Active text colour', '#ffffff')}
               ${this._renderColourPicker('inactive_text_color', 'Inactive text colour', '#212121')}
@@ -164,13 +166,19 @@ const EDITOR_DEFAULTS: Partial<EconextScheduleCardConfig> = {
   show_time_labels: true,
   highlight_current_day: true,
   highlight_current_slot: true,
+  weekly_orientation: 'wide',
   weekly_time_label_mode: 'hour',
   weekly_cell_label_mode: 'none',
 };
 
 // ha-form `visible` conditions need HA 2026.8+; older versions show every field.
-const WEEKLY_LABELS_VISIBLE = [
+const WEEKLY_TALL_VISIBLE = [
   { field: 'layout', value: 'weekly' },
+  { field: 'weekly_orientation', value: 'tall' },
+];
+
+const WEEKLY_LABELS_VISIBLE = [
+  ...WEEKLY_TALL_VISIBLE,
   { field: 'weekly_cell_label_mode', operator: 'not_eq', value: 'none' },
 ];
 
@@ -195,7 +203,30 @@ const EDITOR_SCHEMA = [
     selector: { boolean: {} },
     visible: { field: 'editable', value: true },
   },
-  { name: 'show_time_labels', selector: { boolean: {} }, visible: { field: 'layout', value: 'tabs' } },
+  {
+    name: 'weekly_orientation',
+    selector: {
+      select: {
+        mode: 'dropdown',
+        options: [
+          { value: 'wide', label: 'Wide: days as rows (compact)' },
+          { value: 'tall', label: 'Tall: days as columns' },
+        ],
+      },
+    },
+    visible: { field: 'layout', value: 'weekly' },
+  },
+  {
+    name: 'show_time_labels',
+    selector: { boolean: {} },
+    visible: {
+      condition: 'or',
+      conditions: [
+        { field: 'layout', value: 'tabs' },
+        { field: 'weekly_orientation', value: 'wide' },
+      ],
+    },
+  },
   {
     name: 'weekly_time_label_mode',
     selector: {
@@ -207,7 +238,7 @@ const EDITOR_SCHEMA = [
         ],
       },
     },
-    visible: { field: 'layout', value: 'weekly' },
+    visible: WEEKLY_TALL_VISIBLE,
   },
   {
     name: 'weekly_cell_label_mode',
@@ -222,7 +253,7 @@ const EDITOR_SCHEMA = [
         ],
       },
     },
-    visible: { field: 'layout', value: 'weekly' },
+    visible: WEEKLY_TALL_VISIBLE,
   },
   { name: 'active_label', selector: { text: {} }, visible: WEEKLY_LABELS_VISIBLE },
   { name: 'inactive_label', selector: { text: {} }, visible: WEEKLY_LABELS_VISIBLE },
@@ -236,6 +267,7 @@ const EDITOR_LABELS: Record<string, string> = {
   schedule_entity_prefix: 'Schedule entity prefix',
   title: 'Title',
   layout: 'Layout',
+  weekly_orientation: 'Weekly grid shape',
   editable: 'Allow editing',
   show_copy_controls: 'Show copy controls',
   show_time_labels: 'Show time labels',

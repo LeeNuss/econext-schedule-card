@@ -157,18 +157,28 @@ export const cardStyles = css`
     --weekly-grid-line-color: rgba(0, 0, 0, 0.18);
     --weekly-row-height: 10px;
     display: grid;
+  }
+
+  /* Tall: days as columns, one row per half hour */
+  .weekly-grid.tall {
     grid-template-columns: 38px repeat(7, minmax(0, 1fr));
     grid-template-rows: 26px repeat(48, var(--weekly-row-height));
   }
 
-  .weekly-grid.labelled {
+  .weekly-grid.tall.labelled {
     --weekly-row-height: 20px;
+  }
+
+  /* Wide: days as rows, one column per half hour */
+  .weekly-grid.wide {
+    --weekly-row-height: 22px;
+    grid-template-columns: 38px repeat(48, minmax(0, 1fr));
+    grid-template-rows: repeat(7, var(--weekly-row-height)) auto;
   }
 
   .weekly-time-header,
   .weekly-day-header {
     box-sizing: border-box;
-    height: 26px;
     border: 0;
     border-bottom: 1px solid var(--divider-color, #e0e0e0);
     background: var(--card-background-color);
@@ -183,6 +193,19 @@ export const cardStyles = css`
   .weekly-day-header {
     border-radius: 0;
     cursor: pointer;
+  }
+
+  .weekly-grid.wide .weekly-day-header {
+    border-right: 1px solid var(--divider-color, #e0e0e0);
+  }
+
+  .weekly-hour-label {
+    color: var(--secondary-text-color);
+    font-size: 9px;
+    line-height: 16px;
+    overflow: hidden;
+    padding-left: 1px;
+    white-space: nowrap;
   }
 
   .weekly-day-header.copy-source {
@@ -220,7 +243,6 @@ export const cardStyles = css`
     box-sizing: border-box;
     appearance: none;
     border: 0;
-    border-right: 1px solid var(--weekly-grid-line-color);
     cursor: pointer;
     font: inherit;
     font-size: 9px;
@@ -233,12 +255,22 @@ export const cardStyles = css`
     text-transform: uppercase;
   }
 
-  .weekly-cell.hour-end {
+  .weekly-grid.tall .weekly-cell {
+    border-right: 1px solid var(--weekly-grid-line-color);
+  }
+
+  .weekly-grid.tall .weekly-cell.hour-end,
+  .weekly-grid.tall.labelled .weekly-cell {
     border-bottom: 1px solid var(--weekly-grid-line-color);
   }
 
-  .weekly-grid.labelled .weekly-cell {
+  .weekly-grid.wide .weekly-cell {
     border-bottom: 1px solid var(--weekly-grid-line-color);
+    padding: 0;
+  }
+
+  .weekly-grid.wide .weekly-cell.hour-end {
+    border-right: 1px solid var(--weekly-grid-line-color);
   }
 
   .weekly-cell ha-icon {
@@ -396,11 +428,16 @@ export const cardStyles = css`
       padding: 0 8px;
     }
 
-    .weekly-grid {
+    .weekly-grid.tall {
       grid-template-columns: 32px repeat(7, minmax(0, 1fr));
     }
 
-    .weekly-time-label {
+    .weekly-grid.wide {
+      grid-template-columns: 32px repeat(48, minmax(0, 1fr));
+    }
+
+    .weekly-time-label,
+    .weekly-hour-label {
       font-size: 8px;
     }
 

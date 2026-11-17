@@ -28,6 +28,17 @@ import {
 import { cardStyles } from './styles';
 import { describePrefix, findSchedulePrefixes } from './discovery';
 
+interface WeeklyCellContext {
+  currentDay: DayKey;
+  currentSlot: number;
+  activeColor: string;
+  inactiveColor: string;
+  editable: boolean;
+  showLabels: boolean;
+  showIcons: boolean;
+  schedules: Map<DayKey, DaySchedule | null>;
+}
+
 @customElement('econext-schedule-card')
 export class EconextScheduleCard extends LitElement {
   @property({ attribute: false }) public hass!: HomeAssistant;
@@ -475,101 +486,155 @@ export class EconextScheduleCard extends LitElement {
     activeColor: string,
     inactiveColor: string
   ): TemplateResult {
-    const editable = this._config?.editable !== false;
-    const timeLabelMode = this._config?.weekly_time_label_mode ?? 'hour';
-    const labelMode = this._config?.weekly_cell_label_mode;
-    const showCellLabels = labelMode === 'state' || labelMode === 'state_icon';
-    const showCellIcons = labelMode === 'icon' || labelMode === 'state_icon';
+    const tall = this._config?.weekly_orientation === 'tall';
+    // Cells in the wide grid are a few pixels wide, too narrow for text.
+    const labelMode = tall ? this._config?.weekly_cell_label_mode : 'none';
+    const ctx: WeeklyCellContext = {
+      currentDay,
+      currentSlot,
+      activeColor,
+      inactiveColor,
+      editable: this._config?.editable !== false,
+      showLabels: labelMode === 'state' || labelMode === 'state_icon',
+      showIcons: labelMode === 'icon' || labelMode === 'state_icon',
+      schedules: new Map(DAYS_ORDER.map(day => [day, this._buildDaySchedule(day)])),
+    };
     const gridStyle = styleMap(
       this._config?.grid_line_color ? { '--weekly-grid-line-color': this._config.grid_line_color } : {}
     );
-    const schedules = new Map(DAYS_ORDER.map(day => [day, this._buildDaySchedule(day)]));
+    const days = this._displayDays();
 
     return html`
       <div class="weekly-grid-wrapper">
         <div
-          class="weekly-grid ${classMap({ labelled: showCellLabels || showCellIcons })}"
+          class="weekly-grid ${classMap({
+            tall,
+            wide: !tall,
+            labelled: ctx.showLabels || ctx.showIcons,
+          })}"
           aria-label="Weekly schedule"
           style=${gridStyle}
         >
-          <div class="weekly-time-header" style="grid-row: 1; grid-column: 1"></div>
-          ${this._displayDays().map((day, dayIndex) => html`
-            <button
-              class="weekly-day-header ${classMap({
-                'current-day': this._config!.highlight_current_day !== false && day === currentDay,
-                'copy-source': day === this._selectedDay,
-                error: this._hasErrorForDay(day),
-              })}"
-              style="grid-row: 1; grid-column: ${dayIndex + 2}"
-              aria-pressed=${day === this._selectedDay ? 'true' : 'false'}
-              @click=${() => { this._selectedDay = day; }}
-            >
-              ${DAY_LABELS[day]}
-            </button>
-          `)}
-
-          ${Array.from({ length: SLOTS_PER_DAY }, (_, slotIndex) => {
-            // Hour mode: one label per hour spanning both half-hour rows.
-            const label =
-              timeLabelMode === 'all'
-                ? html`<div class="weekly-time-label" style="grid-row: ${slotIndex + 2}; grid-column: 1">
-                    ${slotToTime(slotIndex)}
-                  </div>`
-                : slotIndex % 2 === 0
-                  ? html`<div class="weekly-time-label hour" style="grid-row: ${slotIndex + 2} / span 2; grid-column: 1">
-                      ${slotToTime(slotIndex)}
-                    </div>`
-                  : nothing;
-
-            return html`
-              ${label}
-              ${this._displayDays().map((day, dayIndex) => {
-                const schedule = schedules.get(day) ?? null;
-                const active = schedule?.slots[slotIndex] ?? false;
-                const isCurrentSlotHighlight =
-                  this._config?.highlight_current_slot !== false &&
-                  day === currentDay &&
-                  slotIndex === currentSlot;
-                const cellLabel = active
-                  ? this._config?.active_label ?? 'On'
-                  : this._config?.inactive_label ?? 'Off';
-                const textColor = active
-                  ? this._config?.active_text_color ?? '#ffffff'
-                  : this._config?.inactive_text_color ?? '#212121';
-                const icon = active
-                  ? this._config?.active_icon ?? 'mdi:weather-sunny'
-                  : this._config?.inactive_icon ?? 'mdi:weather-night';
-
-                return html`
-                  <button
-                    class="weekly-cell ${classMap({
-                      active,
-                      inactive: !active,
-                      'hour-end': slotIndex % 2 === 1,
-                      'current-slot': isCurrentSlotHighlight,
-                      readonly: !editable || !schedule,
-                    })}"
-                    style=${styleMap({
-                      gridRow: String(slotIndex + 2),
-                      gridColumn: String(dayIndex + 2),
-                      backgroundColor: active ? activeColor : inactiveColor,
-                      color: textColor,
-                    })}
-                    title="${DAY_LABELS[day]} ${slotToTime(slotIndex)} - ${active ? 'Active' : 'Inactive'}"
-                    ?disabled=${!editable || !schedule}
-                    @click=${() => schedule && this._handleCellClick(day, slotIndex)}
-                  >${showCellLabels || showCellIcons
-                    ? html`<span class="weekly-cell-content">
-                        ${showCellIcons ? html`<ha-icon .icon=${icon}></ha-icon>` : nothing}
-                        ${showCellLabels ? html`<span>${cellLabel}</span>` : nothing}
-                      </span>`
-                    : nothing}</button>
-                `;
-              })}
-            `;
-          })}
+          ${tall ? this._renderTallGrid(days, ctx) : this._renderWideGrid(days, ctx)}
         </div>
       </div>
+    `;
+  }
+
+  /** Days as columns, time running down: one row per half hour. */
+  private _renderTallGrid(days: DayKey[], ctx: WeeklyCellContext): TemplateResult {
+    const timeLabelMode = this._config?.weekly_time_label_mode ?? 'hour';
+
+    return html`
+      <div class="weekly-time-header" style="grid-row: 1; grid-column: 1"></div>
+      ${days.map((day, dayIndex) => this._renderDayHeader(day, 1, dayIndex + 2))}
+      ${Array.from({ length: SLOTS_PER_DAY }, (_, slotIndex) => {
+        // Hour mode: one label per hour spanning both half-hour rows.
+        const label =
+          timeLabelMode === 'all'
+            ? html`<div class="weekly-time-label" style="grid-row: ${slotIndex + 2}; grid-column: 1">
+                ${slotToTime(slotIndex)}
+              </div>`
+            : slotIndex % 2 === 0
+              ? html`<div class="weekly-time-label hour" style="grid-row: ${slotIndex + 2} / span 2; grid-column: 1">
+                  ${slotToTime(slotIndex)}
+                </div>`
+              : nothing;
+
+        return html`
+          ${label}
+          ${days.map((day, dayIndex) => this._renderWeeklyCell(day, slotIndex, slotIndex + 2, dayIndex + 2, ctx))}
+        `;
+      })}
+    `;
+  }
+
+  /** Days as rows, time running across: the tabs layout's strip for every day. */
+  private _renderWideGrid(days: DayKey[], ctx: WeeklyCellContext): TemplateResult {
+    const labelRow = days.length + 1;
+
+    return html`
+      ${days.map((day, dayIndex) => html`
+        ${this._renderDayHeader(day, dayIndex + 1, 1)}
+        ${Array.from({ length: SLOTS_PER_DAY }, (_, slotIndex) =>
+          this._renderWeeklyCell(day, slotIndex, dayIndex + 1, slotIndex + 2, ctx)
+        )}
+      `)}
+      ${this._config?.show_time_labels !== false
+        ? Array.from({ length: SLOTS_PER_DAY / 2 }, (_, hour) => html`
+            <div class="weekly-hour-label" style="grid-row: ${labelRow}; grid-column: ${hour * 2 + 2} / span 2">
+              ${hour}
+            </div>
+          `)
+        : nothing}
+    `;
+  }
+
+  private _renderDayHeader(day: DayKey, row: number, column: number): TemplateResult {
+    return html`
+      <button
+        class="weekly-day-header ${classMap({
+          'current-day': this._config!.highlight_current_day !== false && day === getCurrentDay(),
+          'copy-source': day === this._selectedDay,
+          error: this._hasErrorForDay(day),
+        })}"
+        style="grid-row: ${row}; grid-column: ${column}"
+        aria-pressed=${day === this._selectedDay ? 'true' : 'false'}
+        @click=${() => { this._selectedDay = day; }}
+      >
+        ${DAY_LABELS[day]}
+      </button>
+    `;
+  }
+
+  private _renderWeeklyCell(
+    day: DayKey,
+    slotIndex: number,
+    row: number,
+    column: number,
+    ctx: WeeklyCellContext
+  ): TemplateResult {
+    const schedule = ctx.schedules.get(day) ?? null;
+    const active = schedule?.slots[slotIndex] ?? false;
+    const isCurrentSlotHighlight =
+      this._config?.highlight_current_slot !== false &&
+      day === ctx.currentDay &&
+      slotIndex === ctx.currentSlot;
+    const cellLabel = active
+      ? this._config?.active_label ?? 'On'
+      : this._config?.inactive_label ?? 'Off';
+    const textColor = active
+      ? this._config?.active_text_color ?? '#ffffff'
+      : this._config?.inactive_text_color ?? '#212121';
+    const icon = active
+      ? this._config?.active_icon ?? 'mdi:weather-sunny'
+      : this._config?.inactive_icon ?? 'mdi:weather-night';
+    const disabled = !ctx.editable || !schedule;
+
+    return html`
+      <button
+        class="weekly-cell ${classMap({
+          active,
+          inactive: !active,
+          'hour-end': slotIndex % 2 === 1,
+          'current-slot': isCurrentSlotHighlight,
+          readonly: disabled,
+        })}"
+        style=${styleMap({
+          gridRow: String(row),
+          gridColumn: String(column),
+          backgroundColor: active ? ctx.activeColor : ctx.inactiveColor,
+          color: textColor,
+        })}
+        title="${DAY_LABELS[day]} ${slotToTime(slotIndex)} - ${active ? 'Active' : 'Inactive'}"
+        ?disabled=${disabled}
+        @click=${() => schedule && this._handleCellClick(day, slotIndex)}
+      >${ctx.showLabels || ctx.showIcons
+        ? html`<span class="weekly-cell-content">
+            ${ctx.showIcons ? html`<ha-icon .icon=${icon}></ha-icon>` : nothing}
+            ${ctx.showLabels ? html`<span>${cellLabel}</span>` : nothing}
+          </span>`
+        : nothing}</button>
     `;
   }
 

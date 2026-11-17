@@ -43,6 +43,8 @@ export interface EconextScheduleCardConfig {
   title?: string;
   /** Display one selected day or all seven days in a weekly grid (default: tabs) */
   layout?: 'tabs' | 'weekly';
+  /** Weekly layout shape: days as rows (wide, default) or days as columns (tall) */
+  weekly_orientation?: 'wide' | 'tall';
   /** In weekly layout, show every half-hour label or only whole-hour labels (default: hour) */
   weekly_time_label_mode?: 'all' | 'hour';
   /** In weekly layout, show no cell content, state text, or active/inactive icons (default: none) */
