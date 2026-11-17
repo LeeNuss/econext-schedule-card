@@ -449,7 +449,7 @@ export class EconextScheduleCard extends LitElement {
         <label class="copy-label" for="copy-source">Copy</label>
         <select
           id="copy-source"
-          class="copy-source"
+          class="copy-source-select"
           @change=${(event: Event) => {
             this._selectedDay = (event.target as HTMLSelectElement).value as DayKey;
           }}

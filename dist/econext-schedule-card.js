@@ -97,7 +97,7 @@ function e(e,t,i,r){var s,o=arguments.length,n=o<3?t:null===r?r=Object.getOwnPro
     margin-right: 2px;
   }
 
-  .copy-source {
+  .copy-source-select {
     min-height: 32px;
     border: 1px solid var(--divider-color, #e0e0e0);
     border-radius: 8px;
@@ -512,7 +512,7 @@ function e(e,t,i,r){var s,o=arguments.length,n=o<3?t:null===r?r=Object.getOwnPro
         <label class="copy-label" for="copy-source">Copy</label>
         <select
           id="copy-source"
-          class="copy-source"
+          class="copy-source-select"
           @change=${e=>{this._selectedDay=e.target.value}}
         >
           ${this._displayDays().map(e=>W`

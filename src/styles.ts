@@ -99,7 +99,7 @@ export const cardStyles = css`
     margin-right: 2px;
   }
 
-  .copy-source {
+  .copy-source-select {
     min-height: 32px;
     border: 1px solid var(--divider-color, #e0e0e0);
     border-radius: 8px;
