@@ -11,8 +11,13 @@ const SUFFIX = '_sunday_am';
 export function findSchedulePrefixes(hass?: HomeAssistant): string[] {
   if (!hass?.states) return [];
 
+  // Entity registry display entries (HA 2023.4+); used to skip number
+  // entities from other integrations that happen to share the naming.
+  const registry = (hass as HomeAssistant & { entities?: Record<string, { platform?: string }> }).entities;
+
   const prefixes = Object.keys(hass.states)
     .filter(entityId => entityId.startsWith('number.') && entityId.endsWith(SUFFIX))
+    .filter(entityId => !registry?.[entityId]?.platform || registry[entityId].platform === 'econext')
     .map(entityId => entityId.slice(0, -SUFFIX.length))
     .filter(prefix =>
       DAYS_ORDER.every(

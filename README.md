@@ -36,7 +36,7 @@ A Home Assistant Lovelace card for displaying and editing weekly schedules from 
 
 ```yaml
 type: custom:econext-schedule-card
-schedule_entity_prefix: number.econext_dhw_schedule
+schedule_entity_prefix: number.dhw_dhw_schedule
 title: "DHW Schedule"
 ```
 
@@ -45,11 +45,25 @@ The card automatically discovers entities based on the prefix pattern:
 - `{prefix}_monday_am`, `{prefix}_monday_pm`
 - etc.
 
+Default prefixes created by the ecoNEXT integration:
+
+| Schedule | Prefix |
+|----------|--------|
+| DHW | `number.dhw_dhw_schedule` |
+| Heat pump | `number.heat_pump_heat_pump_schedule` |
+| Heat pump silent mode | `number.heat_pump_silent_mode_schedule` |
+| Heating circuit N | `number.circuit_N_schedule` |
+
+A circuit that has a name set on the controller uses that name instead, for
+example `number.ufh_schedule` for a circuit called "UFH". Renamed entities keep
+their new IDs. The visual editor lists every schedule it finds, whatever the
+naming.
+
 ## Configuration Options
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `schedule_entity_prefix` | string | *required* | Entity prefix (e.g., `number.econext_dhw_schedule`) |
+| `schedule_entity_prefix` | string | *required* | Entity prefix (e.g., `number.dhw_dhw_schedule`) |
 | `title` | string | none | Card title |
 | `layout` | string | `tabs` | `tabs` for one selected day, or `weekly` for a seven-day grid |
 | `weekly_time_label_mode` | string | `hour` | In weekly layout, show `hour` labels or `all` half-hour labels |
@@ -82,7 +96,7 @@ title: "Hot Water Schedule"
 ### Heating Circuit Schedule
 ```yaml
 type: custom:econext-schedule-card
-schedule_entity_prefix: number.ufh_schedule
+schedule_entity_prefix: number.circuit_1_schedule
 title: "Underfloor Heating"
 active_color: "#ff9800"
 show_copy_controls: true
@@ -107,7 +121,7 @@ menu. The grid remains horizontally scrollable on small screens.
 
 ```yaml
 type: custom:econext-schedule-card
-schedule_entity_prefix: number.ufh_schedule
+schedule_entity_prefix: number.circuit_1_schedule
 title: "Underfloor Heating"
 layout: weekly
 show_copy_controls: true
@@ -135,7 +149,7 @@ controls are also hidden whenever the card is read-only.
 
 ```yaml
 type: custom:econext-schedule-card
-schedule_entity_prefix: number.heatpump_heatpump_schedule
+schedule_entity_prefix: number.heat_pump_heat_pump_schedule
 title: "Heat Pump"
 layout: weekly
 editable: false
@@ -150,7 +164,7 @@ inactive_color: "#64748b"
 ### Heat Pump Schedule (Read-only)
 ```yaml
 type: custom:econext-schedule-card
-schedule_entity_prefix: number.heatpump_heatpump_schedule
+schedule_entity_prefix: number.heat_pump_heat_pump_schedule
 title: "Heat Pump"
 editable: false
 ```

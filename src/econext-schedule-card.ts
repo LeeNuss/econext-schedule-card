@@ -94,7 +94,7 @@ export class EconextScheduleCard extends LitElement {
     // Point the card picker preview at a schedule that actually exists.
     const prefix = findSchedulePrefixes(hass)[0];
     return {
-      schedule_entity_prefix: prefix ?? 'number.econext_dhw_schedule',
+      schedule_entity_prefix: prefix ?? 'number.dhw_dhw_schedule',
       title: prefix ? describePrefix(hass, prefix) : 'Schedule',
     };
   }

@@ -36,7 +36,7 @@ export type DayKey =
 // Card configuration
 export interface EconextScheduleCardConfig {
   type: string;
-  /** Entity prefix, e.g., "number.econext_dhw_schedule" */
+  /** Entity prefix, e.g., "number.dhw_dhw_schedule" */
   schedule_entity_prefix: string;
   /** Optional card title */
   title?: string;
