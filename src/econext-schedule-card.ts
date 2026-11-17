@@ -86,16 +86,27 @@ export class EconextScheduleCard extends LitElement {
   }
 
   public getGridOptions() {
-    // Sections view: span the whole section (a 48-slot strip wants the
-    // width, and a section can be several columns wide) and size the
-    // height to the content, which varies with title, copy controls,
-    // orientation and the error banner.
+    // Sections view. Height follows the content, which varies with title,
+    // copy controls, orientation and the error banner. Width: the 48-slot
+    // strips (tabs, wide grid) want the whole section, which can be several
+    // columns wide; the tall grid's seven day columns fit one section column.
+    if (this._isTallGrid()) {
+      return { columns: 12, rows: 'auto', min_columns: 6 };
+    }
     return { columns: 'full', rows: 'auto', min_columns: 6 };
   }
 
   public getLayoutOptions() {
-    // Pre-2024.11 sections API
-    return { grid_columns: 'full', grid_rows: 'auto', grid_min_columns: 2 };
+    // Pre-2024.11 sections API (columns in units of 3)
+    return {
+      grid_columns: this._isTallGrid() ? 4 : 'full',
+      grid_rows: 'auto',
+      grid_min_columns: 2,
+    };
+  }
+
+  private _isTallGrid(): boolean {
+    return this._config?.layout === 'weekly' && this._config.weekly_orientation === 'tall';
   }
 
   public static getStubConfig(hass?: HomeAssistant): Partial<EconextScheduleCardConfig> {
