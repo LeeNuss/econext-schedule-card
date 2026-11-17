@@ -76,31 +76,26 @@ export class EconextScheduleCard extends LitElement {
   }
 
   public getCardSize(): number {
+    // Masonry view, in 50px units
+    const extras = (this._config?.title ? 1 : 0) + (this._config?.show_copy_controls ? 1 : 0);
     if (this._config?.layout === 'weekly') {
-      // Header, copy controls and the grid (capped at 520px); 50px units
-      return 12;
+      return (this._config.weekly_orientation === 'tall' ? 11 : 4) + extras;
     }
-    // Title + tabs + schedule row + time labels + padding
-    return this._config?.title ? 4 : 3;
+    // Tabs + schedule row + time labels + padding
+    return 3 + extras;
   }
 
   public getGridOptions() {
-    if (this._config?.layout === 'weekly') {
-      return { columns: 12, rows: 'auto', min_columns: 6 };
-    }
-    const rows = this._config?.title ? 4 : 3;
-    return { rows, min_rows: rows };
+    // Sections view: span the whole section (a 48-slot strip wants the
+    // width, and a section can be several columns wide) and size the
+    // height to the content, which varies with title, copy controls,
+    // orientation and the error banner.
+    return { columns: 'full', rows: 'auto', min_columns: 6 };
   }
 
   public getLayoutOptions() {
     // Pre-2024.11 sections API
-    if (this._config?.layout === 'weekly') {
-      return { grid_columns: 4, grid_min_columns: 2, grid_rows: 'auto' };
-    }
-    return {
-      grid_rows: this._config?.title ? 4 : 3,
-      grid_min_rows: this._config?.title ? 4 : 3,
-    };
+    return { grid_columns: 'full', grid_rows: 'auto', grid_min_columns: 2 };
   }
 
   public static getStubConfig(hass?: HomeAssistant): Partial<EconextScheduleCardConfig> {
