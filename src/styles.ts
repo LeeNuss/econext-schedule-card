@@ -84,9 +84,229 @@ export const cardStyles = css`
     display: none;
   }
 
+  /* Copy controls */
+  .copy-controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin: 0 0 16px;
+  }
+
+  .copy-label {
+    color: var(--secondary-text-color);
+    font-size: 13px;
+    margin-right: 2px;
+  }
+
+  .copy-source-select {
+    min-height: 32px;
+    border: 1px solid var(--divider-color, #e0e0e0);
+    border-radius: 8px;
+    background: var(--card-background-color);
+    color: var(--primary-text-color);
+    font: inherit;
+    font-size: 13px;
+    padding: 0 8px;
+  }
+
+  .copy-button {
+    appearance: none;
+    border: 0;
+    border-radius: 8px;
+    background: var(--primary-color);
+    color: var(--text-primary-color, #fff);
+    cursor: pointer;
+    font: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    line-height: 32px;
+    min-height: 32px;
+    padding: 0 12px;
+  }
+
+  .copy-status {
+    color: var(--secondary-text-color);
+    font-size: 13px;
+  }
+
+  .copy-button:hover {
+    filter: brightness(1.08);
+  }
+
+  .copy-button:focus-visible {
+    outline: 2px solid var(--primary-color);
+    outline-offset: 2px;
+  }
+
   /* Schedule row container */
   .schedule-container {
     width: 100%;
+  }
+
+  /* Weekly layout: the whole week fits without scrolling */
+  .weekly-grid-wrapper {
+    border: 1px solid var(--divider-color, #e0e0e0);
+    border-radius: var(--border-radius);
+    overflow: hidden;
+  }
+
+  .weekly-grid {
+    /* Lines are drawn over the cell colour, so a translucent default reads
+       on light, dark and active cells alike. */
+    --weekly-grid-line-color: rgba(0, 0, 0, 0.18);
+    --weekly-row-height: 10px;
+    display: grid;
+  }
+
+  /* Tall: days as columns, one row per half hour */
+  .weekly-grid.tall {
+    grid-template-columns: 38px repeat(7, minmax(0, 1fr));
+    grid-template-rows: 26px repeat(48, var(--weekly-row-height));
+  }
+
+  .weekly-grid.tall.labelled {
+    --weekly-row-height: 20px;
+  }
+
+  /* Wide: days as rows, one column per half hour */
+  .weekly-grid.wide {
+    --weekly-row-height: 22px;
+    grid-template-columns: 38px repeat(48, minmax(0, 1fr));
+    grid-template-rows: repeat(7, var(--weekly-row-height)) auto;
+  }
+
+  .weekly-time-header,
+  .weekly-day-header {
+    box-sizing: border-box;
+    border: 0;
+    border-bottom: 1px solid var(--divider-color, #e0e0e0);
+    background: var(--card-background-color);
+    color: var(--primary-text-color);
+    font: inherit;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 0;
+    text-align: center;
+  }
+
+  .weekly-day-header {
+    border-radius: 0;
+    cursor: pointer;
+  }
+
+  .weekly-grid.wide .weekly-day-header {
+    border-right: 1px solid var(--divider-color, #e0e0e0);
+  }
+
+  .weekly-hour-label {
+    color: var(--secondary-text-color);
+    font-size: 9px;
+    line-height: 16px;
+    overflow: hidden;
+    padding-left: 1px;
+    white-space: nowrap;
+  }
+
+  .weekly-day-header.copy-source {
+    background: var(--primary-color);
+    color: var(--text-primary-color, #fff);
+  }
+
+  .weekly-day-header.error {
+    box-shadow: inset 0 -3px 0 var(--error-color, #db4437);
+  }
+
+  .weekly-day-header.current-day:not(.copy-source) {
+    background: color-mix(in srgb, var(--primary-color) 18%, var(--card-background-color));
+    color: var(--primary-color);
+  }
+
+  .weekly-time-label {
+    box-sizing: border-box;
+    border-right: 1px solid var(--divider-color, #e0e0e0);
+    color: var(--secondary-text-color);
+    font-size: 9px;
+    line-height: var(--weekly-row-height);
+    overflow: hidden;
+    padding-right: 4px;
+    text-align: right;
+    white-space: nowrap;
+  }
+
+  .weekly-time-label.hour {
+    line-height: 1;
+    padding-top: 1px;
+  }
+
+  .weekly-cell {
+    box-sizing: border-box;
+    appearance: none;
+    border: 0;
+    cursor: pointer;
+    font: inherit;
+    font-size: 9px;
+    font-weight: 600;
+    line-height: var(--weekly-row-height);
+    min-width: 0;
+    overflow: hidden;
+    padding: 0 2px;
+    text-align: center;
+    text-transform: uppercase;
+  }
+
+  .weekly-grid.tall .weekly-cell {
+    border-right: 1px solid var(--weekly-grid-line-color);
+  }
+
+  .weekly-grid.tall .weekly-cell.hour-end,
+  .weekly-grid.tall.labelled .weekly-cell {
+    border-bottom: 1px solid var(--weekly-grid-line-color);
+  }
+
+  .weekly-grid.wide .weekly-cell {
+    border-bottom: 1px solid var(--weekly-grid-line-color);
+    padding: 0;
+  }
+
+  .weekly-grid.wide .weekly-cell.hour-end {
+    border-right: 1px solid var(--weekly-grid-line-color);
+  }
+
+  .weekly-cell ha-icon {
+    --mdc-icon-size: 12px;
+    display: inline-block;
+    height: 12px;
+    vertical-align: middle;
+    width: 12px;
+  }
+
+  .weekly-cell-content {
+    align-items: center;
+    display: inline-flex;
+    gap: 3px;
+    justify-content: center;
+    max-width: 100%;
+    white-space: nowrap;
+  }
+
+  .weekly-cell-content ha-icon {
+    flex: 0 0 auto;
+  }
+
+  .weekly-cell:hover:not(:disabled) {
+    filter: brightness(0.9);
+  }
+
+  .weekly-cell:disabled {
+    cursor: default;
+  }
+
+  .weekly-cell.current-slot {
+    outline: 2px solid var(--current-slot-outline);
+    outline-offset: -2px;
+    position: relative;
+    z-index: 1;
   }
 
   .schedule-row-wrapper {
@@ -198,6 +418,27 @@ export const cardStyles = css`
     .day-tab {
       font-size: 11px;
       padding: 6px 2px;
+    }
+
+    .copy-controls {
+      gap: 6px;
+    }
+
+    .copy-button {
+      padding: 0 8px;
+    }
+
+    .weekly-grid.tall {
+      grid-template-columns: 32px repeat(7, minmax(0, 1fr));
+    }
+
+    .weekly-grid.wide {
+      grid-template-columns: 32px repeat(48, minmax(0, 1fr));
+    }
+
+    .weekly-time-label,
+    .weekly-hour-label {
+      font-size: 8px;
     }
 
     .time-label {

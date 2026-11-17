@@ -14,6 +14,17 @@ export const DAYS_ORDER: DayKey[] = [
 ];
 
 /**
+ * Days in display order, starting from the user's first weekday in Home
+ * Assistant (Profile > General). "language" and unknown values start on
+ * Monday, so Sunday sits at the end of the week.
+ */
+export function displayDays(firstWeekday?: string): DayKey[] {
+  const start = DAYS_ORDER.indexOf(firstWeekday as DayKey);
+  const offset = start === -1 ? 1 : start;
+  return DAYS_ORDER.map((_, i) => DAYS_ORDER[(i + offset) % DAYS_ORDER.length]);
+}
+
+/**
  * Short day labels for display
  */
 export const DAY_LABELS: Record<DayKey, string> = {

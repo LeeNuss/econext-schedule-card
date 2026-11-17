@@ -2,6 +2,7 @@ import { LitElement, html, nothing, type CSSResultGroup, type PropertyValues, ty
 import { customElement, property, state } from 'lit/decorators.js';
 import { classMap } from 'lit/directives/class-map.js';
 import { styleMap } from 'lit/directives/style-map.js';
+import { live } from 'lit/directives/live.js';
 
 import type {
   HomeAssistant,
@@ -12,6 +13,7 @@ import type {
 import { combineAmPm, toggleBit } from './bitfield';
 import {
   DAYS_ORDER,
+  displayDays,
   DAY_LABELS,
   SLOTS_PER_DAY,
   getCurrentSlotIndex,
@@ -24,6 +26,18 @@ import {
 } from './constants';
 
 import { cardStyles } from './styles';
+import { describePrefix, findSchedulePrefixes } from './discovery';
+
+interface WeeklyCellContext {
+  currentDay: DayKey;
+  currentSlot: number;
+  activeColor: string;
+  inactiveColor: string;
+  editable: boolean;
+  showLabels: boolean;
+  showIcons: boolean;
+  schedules: Map<DayKey, DaySchedule | null>;
+}
 
 @customElement('econext-schedule-card')
 export class EconextScheduleCard extends LitElement {
@@ -33,15 +47,14 @@ export class EconextScheduleCard extends LitElement {
   @state() private _selectedDay: DayKey = getCurrentDay();
   @state() private _pendingValues: Map<string, number> = new Map();
   @state() private _errorEntityIds: Set<string> = new Set();
+  @state() private _inFlight: Set<string> = new Set();
 
   private _debounceTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
-  private _sendQueue: string[] = [];
-  private _queueProcessing = false;
+  private _batchWrites?: Promise<boolean>;
 
   private static readonly DEBOUNCE_MS = 500;
   private static readonly MAX_RETRIES = 2;
   private static readonly RETRY_BASE_MS = 1000;
-  private static readonly INTER_CALL_DELAY_MS = 3000;
 
   static get styles(): CSSResultGroup {
     return cardStyles;
@@ -64,22 +77,54 @@ export class EconextScheduleCard extends LitElement {
   }
 
   public getCardSize(): number {
-    // Title + tabs + schedule row + time labels + padding
-    return this._config?.title ? 4 : 3;
+    // Masonry view, in 50px units
+    const extras = (this._config?.title ? 1 : 0) + (this._config?.show_copy_controls ? 1 : 0);
+    if (this._config?.layout === 'weekly') {
+      return (this._config.weekly_orientation === 'tall' ? 11 : 4) + extras;
+    }
+    // Tabs + schedule row + time labels + padding
+    return 3 + extras;
+  }
+
+  public getGridOptions() {
+    // Sections view. Height follows the content, which varies with title,
+    // copy controls, orientation and the error banner. Width: the 48-slot
+    // strips (tabs, wide grid) want the whole section, which can be several
+    // columns wide; the tall grid's seven day columns fit one section column.
+    if (this._isTallGrid()) {
+      return { columns: 12, rows: 'auto', min_columns: 6 };
+    }
+    return { columns: 'full', rows: 'auto', min_columns: 6 };
   }
 
   public getLayoutOptions() {
+    // Pre-2024.11 sections API (columns in units of 3)
     return {
-      grid_rows: this._config?.title ? 4 : 3,
-      grid_min_rows: this._config?.title ? 4 : 3,
+      grid_columns: this._isTallGrid() ? 4 : 'full',
+      grid_rows: 'auto',
+      grid_min_columns: 2,
     };
   }
 
-  public static getStubConfig(): Partial<EconextScheduleCardConfig> {
+  private _isTallGrid(): boolean {
+    return this._config?.layout === 'weekly' && this._config.weekly_orientation === 'tall';
+  }
+
+  public static getStubConfig(hass?: HomeAssistant): Partial<EconextScheduleCardConfig> {
+    // Point the card picker preview at a schedule that actually exists.
+    const prefix = findSchedulePrefixes(hass)[0];
     return {
-      schedule_entity_prefix: 'number.econext_dhw_schedule',
-      title: 'Schedule',
+      schedule_entity_prefix: prefix ?? 'number.dhw_dhw_schedule',
+      title: prefix ? describePrefix(hass, prefix) : 'Schedule',
     };
+  }
+
+  public static getConfigElement(): HTMLElement {
+    return document.createElement('econext-schedule-card-editor');
+  }
+
+  private _displayDays(): DayKey[] {
+    return displayDays(this.hass?.locale?.first_weekday);
   }
 
   private _getEntityId(day: DayKey, period: 'am' | 'pm'): string {
@@ -137,77 +182,137 @@ export class EconextScheduleCard extends LitElement {
     this._scheduleSend(entityId);
   }
 
+  private _copySelectedDayTo(targetDays: DayKey[]): void {
+    if (!this._config?.editable || !this.hass) return;
+
+    const sourceDay = this._buildDaySchedule(this._selectedDay);
+    if (!sourceDay) return;
+
+    const pending = new Map(this._pendingValues);
+    const entityIdsToSend: string[] = [];
+
+    for (const day of targetDays) {
+      if (day === this._selectedDay) continue;
+
+      const amEntityId = this._getEntityId(day, 'am');
+      const pmEntityId = this._getEntityId(day, 'pm');
+
+      // Avoid unnecessary writes when the target already matches the source.
+      if (this._getEffectiveValue(amEntityId) !== sourceDay.amValue) {
+        pending.set(amEntityId, sourceDay.amValue);
+        entityIdsToSend.push(amEntityId);
+      }
+      if (this._getEffectiveValue(pmEntityId) !== sourceDay.pmValue) {
+        pending.set(pmEntityId, sourceDay.pmValue);
+        entityIdsToSend.push(pmEntityId);
+      }
+    }
+
+    if (entityIdsToSend.length === 0) return;
+
+    this._pendingValues = pending;
+    void this._sendCopy(entityIdsToSend);
+  }
+
+  private async _sendCopy(entityIds: string[]): Promise<void> {
+    if (await this._supportsBatchWrites()) {
+      // The integration coalesces service calls that arrive together into
+      // one gateway batch (one bus token hold), so send everything at once.
+      for (const entityId of entityIds) {
+        this._flush(entityId);
+      }
+      return;
+    }
+
+    // Older integration: concurrent calls would each wait for their own bus
+    // token and the last ones could hit its HTTP timeout, so send them one
+    // at a time instead.
+    for (const entityId of entityIds) {
+      this._cancelDebounce(entityId);
+      if (this._inFlight.has(entityId)) continue;
+      await this._send(entityId);
+    }
+  }
+
+  /** Whether the integration batches concurrent writes (econext/info, cached). */
+  private _supportsBatchWrites(): Promise<boolean> {
+    if (!this._batchWrites) {
+      this._batchWrites = this.hass
+        .callWS<{ batch_writes?: boolean }>({ type: 'econext/info' })
+        .then(info => info?.batch_writes === true)
+        // Unknown command: an integration from before batch writes.
+        .catch(() => false);
+    }
+    return this._batchWrites;
+  }
+
   private _scheduleSend(entityId: string): void {
     const existing = this._debounceTimers.get(entityId);
     if (existing !== undefined) {
       clearTimeout(existing);
     }
 
-    const timer = setTimeout(() => {
-      this._enqueueFlush(entityId);
-    }, EconextScheduleCard.DEBOUNCE_MS);
-
+    const timer = setTimeout(() => this._flush(entityId), EconextScheduleCard.DEBOUNCE_MS);
     this._debounceTimers.set(entityId, timer);
   }
 
-  private _enqueueFlush(entityId: string): void {
-    this._debounceTimers.delete(entityId);
-
-    const value = this._pendingValues.get(entityId);
-    if (value === undefined) return;
-
-    if (!this._sendQueue.includes(entityId)) {
-      this._sendQueue.push(entityId);
+  private _cancelDebounce(entityId: string): void {
+    const timer = this._debounceTimers.get(entityId);
+    if (timer !== undefined) {
+      clearTimeout(timer);
+      this._debounceTimers.delete(entityId);
     }
-
-    this._processQueue();
   }
 
-  private async _processQueue(): Promise<void> {
-    if (this._queueProcessing) return;
-    this._queueProcessing = true;
+  /** Send an entity's pending value now, cancelling any debounce. */
+  private _flush(entityId: string): void {
+    this._cancelDebounce(entityId);
+    // A write already on its way re-checks the pending value when it
+    // finishes and sends again if it changed, so never run two at once.
+    if (this._inFlight.has(entityId)) return;
+    void this._send(entityId);
+  }
 
+  private async _send(entityId: string): Promise<void> {
+    let value = this._pendingValues.get(entityId);
+    if (value === undefined) return;
+
+    this._inFlight = new Set([...this._inFlight, entityId]);
     try {
-      while (this._sendQueue.length > 0) {
-        const entityId = this._sendQueue[0];
-        const value = this._pendingValues.get(entityId);
-
-        if (value === undefined) {
-          this._sendQueue.shift();
-          continue;
-        }
-
-        const success = await this._executeServiceCall(entityId, value);
-
-        if (!success) {
+      for (;;) {
+        const sent = await this._executeServiceCall(entityId, value);
+        if (sent === null) {
           const updated = new Map(this._pendingValues);
           updated.delete(entityId);
           this._pendingValues = updated;
           this._showError(entityId);
+          return;
         }
 
-        this._sendQueue.shift();
-
-        // Wait between calls to let the controller finish processing
-        if (success && this._sendQueue.length > 0) {
-          await new Promise<void>(resolve =>
-            setTimeout(resolve, EconextScheduleCard.INTER_CALL_DELAY_MS)
-          );
+        // Edited again while this write was running: send the newer value,
+        // unless a debounce timer is about to do that.
+        const latest = this._pendingValues.get(entityId);
+        if (latest === undefined || latest === sent || this._debounceTimers.has(entityId)) {
+          return;
         }
+        value = latest;
       }
     } finally {
-      this._queueProcessing = false;
+      const inFlight = new Set(this._inFlight);
+      inFlight.delete(entityId);
+      this._inFlight = inFlight;
     }
   }
 
-  private async _executeServiceCall(entityId: string, value: number): Promise<boolean> {
+  /** Call number.set_value with retries; resolves to the value sent, or null on failure. */
+  private async _executeServiceCall(entityId: string, value: number): Promise<number | null> {
     for (let attempt = 0; attempt <= EconextScheduleCard.MAX_RETRIES; attempt++) {
       try {
         await this.hass.callService('number', 'set_value', {
           entity_id: entityId,
           value,
         });
-        return true;
+        return value;
       } catch (error) {
         console.error(
           `Failed to update ${entityId} (attempt ${attempt + 1}/${EconextScheduleCard.MAX_RETRIES + 1}):`,
@@ -218,13 +323,14 @@ export class EconextScheduleCard extends LitElement {
           const delay = EconextScheduleCard.RETRY_BASE_MS * Math.pow(2, attempt);
           await new Promise<void>(resolve => setTimeout(resolve, delay));
 
+          // Cleared means Home Assistant already reports the value.
           const latestValue = this._pendingValues.get(entityId);
-          if (latestValue === undefined) return true;
+          if (latestValue === undefined) return value;
           value = latestValue;
         }
       }
     }
-    return false;
+    return null;
   }
 
   private _showError(entityId: string): void {
@@ -269,11 +375,12 @@ export class EconextScheduleCard extends LitElement {
 
   override disconnectedCallback(): void {
     super.disconnectedCallback();
-    for (const timer of this._debounceTimers.values()) {
-      clearTimeout(timer);
+    // Send edits still waiting on their debounce instead of dropping them.
+    // Service calls already sent run to completion in Home Assistant even
+    // after the card is gone.
+    for (const entityId of [...this._debounceTimers.keys()]) {
+      this._flush(entityId);
     }
-    this._debounceTimers.clear();
-    this._sendQueue = [];
   }
 
   protected render(): TemplateResult {
@@ -314,49 +421,257 @@ export class EconextScheduleCard extends LitElement {
             `
           : nothing}
 
-        <!-- Day tabs -->
-        <div class="day-tabs">
-          ${DAYS_ORDER.map(day => html`
-            <button
-              class="day-tab ${classMap({
-                active: day === this._selectedDay,
-                'current-day': this._config!.highlight_current_day !== false && day === currentDay,
-                error: this._hasErrorForDay(day),
-              })}"
-              @click=${() => { this._selectedDay = day; }}
-            >
-              ${DAY_LABELS[day]}
-            </button>
-          `)}
-        </div>
-
-        ${this._hasErrorForDay(this._selectedDay)
+        ${this._config.layout !== 'weekly'
           ? html`
-              <div class="error-banner">
-                Failed to save schedule. Changes were reverted.
+              <div class="day-tabs">
+                ${this._displayDays().map(day => html`
+                  <button
+                    class="day-tab ${classMap({
+                      active: day === this._selectedDay,
+                      'current-day': this._config!.highlight_current_day !== false && day === currentDay,
+                      error: this._hasErrorForDay(day),
+                    })}"
+                    @click=${() => { this._selectedDay = day; }}
+                  >
+                    ${DAY_LABELS[day]}
+                  </button>
+                `)}
               </div>
             `
           : nothing}
 
-        <!-- Schedule row -->
-        <div class="schedule-container">
-          <div class="schedule-row-wrapper">
-            ${selectedDaySchedule
-              ? this._renderScheduleRow(
-                  selectedDaySchedule,
-                  this._selectedDay === currentDay,
-                  currentSlot,
-                  activeColor,
-                  inactiveColor
-                )
-              : this._renderEmptyRow()}
+        ${this._renderErrorBanner()}
 
-            ${this._config.show_time_labels !== false
-              ? this._renderTimeLabels()
-              : nothing}
-          </div>
-        </div>
+        ${this._config.show_copy_controls && this._config.editable !== false
+          ? this._renderCopyControls()
+          : nothing}
+
+        ${this._config.layout === 'weekly'
+          ? this._renderWeeklyGrid(currentDay, currentSlot, activeColor, inactiveColor)
+          : html`
+              <div class="schedule-container">
+                <div class="schedule-row-wrapper">
+                  ${selectedDaySchedule
+                    ? this._renderScheduleRow(
+                        selectedDaySchedule,
+                        this._selectedDay === currentDay,
+                        currentSlot,
+                        activeColor,
+                        inactiveColor
+                      )
+                    : this._renderEmptyRow()}
+
+                  ${this._config.show_time_labels !== false
+                    ? this._renderTimeLabels()
+                    : nothing}
+                </div>
+              </div>
+            `}
       </ha-card>
+    `;
+  }
+
+  private _renderErrorBanner(): TemplateResult | typeof nothing {
+    const failedDays = this._displayDays().filter(day => this._hasErrorForDay(day));
+    if (failedDays.length === 0) return nothing;
+    return html`
+      <div class="error-banner">
+        Failed to save ${failedDays.map(day => DAY_LABELS[day]).join(', ')}. Changes were reverted.
+      </div>
+    `;
+  }
+
+  private _renderCopyControls(): TemplateResult {
+    const sourceLabel = DAY_LABELS[this._selectedDay];
+    const weekdays: DayKey[] = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday'];
+    const weekend: DayKey[] = ['saturday', 'sunday'];
+
+    return html`
+      <div class="copy-controls" role="group" aria-label="Copy ${sourceLabel} schedule">
+        <label class="copy-label" for="copy-source">Copy</label>
+        <select
+          id="copy-source"
+          class="copy-source-select"
+          @change=${(event: Event) => {
+            this._selectedDay = (event.target as HTMLSelectElement).value as DayKey;
+          }}
+        >
+          ${this._displayDays().map(day => html`
+            <option value=${day} .selected=${live(day === this._selectedDay)}>${DAY_LABELS[day]}</option>
+          `)}
+        </select>
+        <span class="copy-label">to</span>
+        <button class="copy-button" @click=${() => this._copySelectedDayTo(DAYS_ORDER)}>
+          All days
+        </button>
+        <button class="copy-button" @click=${() => this._copySelectedDayTo(weekdays)}>
+          Weekdays
+        </button>
+        <button class="copy-button" @click=${() => this._copySelectedDayTo(weekend)}>
+          Weekend
+        </button>
+        ${this._inFlight.size > 0 || this._debounceTimers.size > 0
+          ? html`<span class="copy-status" role="status">Saving...</span>`
+          : nothing}
+      </div>
+    `;
+  }
+
+  private _renderWeeklyGrid(
+    currentDay: DayKey,
+    currentSlot: number,
+    activeColor: string,
+    inactiveColor: string
+  ): TemplateResult {
+    const tall = this._config?.weekly_orientation === 'tall';
+    // Cells in the wide grid are a few pixels wide, too narrow for text.
+    const labelMode = tall ? this._config?.weekly_cell_label_mode : 'none';
+    const ctx: WeeklyCellContext = {
+      currentDay,
+      currentSlot,
+      activeColor,
+      inactiveColor,
+      editable: this._config?.editable !== false,
+      showLabels: labelMode === 'state' || labelMode === 'state_icon',
+      showIcons: labelMode === 'icon' || labelMode === 'state_icon',
+      schedules: new Map(DAYS_ORDER.map(day => [day, this._buildDaySchedule(day)])),
+    };
+    const gridStyle = styleMap(
+      this._config?.grid_line_color ? { '--weekly-grid-line-color': this._config.grid_line_color } : {}
+    );
+    const days = this._displayDays();
+
+    return html`
+      <div class="weekly-grid-wrapper">
+        <div
+          class="weekly-grid ${classMap({
+            tall,
+            wide: !tall,
+            labelled: ctx.showLabels || ctx.showIcons,
+          })}"
+          aria-label="Weekly schedule"
+          style=${gridStyle}
+        >
+          ${tall ? this._renderTallGrid(days, ctx) : this._renderWideGrid(days, ctx)}
+        </div>
+      </div>
+    `;
+  }
+
+  /** Days as columns, time running down: one row per half hour. */
+  private _renderTallGrid(days: DayKey[], ctx: WeeklyCellContext): TemplateResult {
+    const timeLabelMode = this._config?.weekly_time_label_mode ?? 'hour';
+
+    return html`
+      <div class="weekly-time-header" style="grid-row: 1; grid-column: 1"></div>
+      ${days.map((day, dayIndex) => this._renderDayHeader(day, 1, dayIndex + 2))}
+      ${Array.from({ length: SLOTS_PER_DAY }, (_, slotIndex) => {
+        // Hour mode: one label per hour spanning both half-hour rows.
+        const label =
+          timeLabelMode === 'all'
+            ? html`<div class="weekly-time-label" style="grid-row: ${slotIndex + 2}; grid-column: 1">
+                ${slotToTime(slotIndex)}
+              </div>`
+            : slotIndex % 2 === 0
+              ? html`<div class="weekly-time-label hour" style="grid-row: ${slotIndex + 2} / span 2; grid-column: 1">
+                  ${slotToTime(slotIndex)}
+                </div>`
+              : nothing;
+
+        return html`
+          ${label}
+          ${days.map((day, dayIndex) => this._renderWeeklyCell(day, slotIndex, slotIndex + 2, dayIndex + 2, ctx))}
+        `;
+      })}
+    `;
+  }
+
+  /** Days as rows, time running across: the tabs layout's strip for every day. */
+  private _renderWideGrid(days: DayKey[], ctx: WeeklyCellContext): TemplateResult {
+    const labelRow = days.length + 1;
+
+    return html`
+      ${days.map((day, dayIndex) => html`
+        ${this._renderDayHeader(day, dayIndex + 1, 1)}
+        ${Array.from({ length: SLOTS_PER_DAY }, (_, slotIndex) =>
+          this._renderWeeklyCell(day, slotIndex, dayIndex + 1, slotIndex + 2, ctx)
+        )}
+      `)}
+      ${this._config?.show_time_labels !== false
+        ? Array.from({ length: SLOTS_PER_DAY / 2 }, (_, hour) => html`
+            <div class="weekly-hour-label" style="grid-row: ${labelRow}; grid-column: ${hour * 2 + 2} / span 2">
+              ${hour}
+            </div>
+          `)
+        : nothing}
+    `;
+  }
+
+  private _renderDayHeader(day: DayKey, row: number, column: number): TemplateResult {
+    return html`
+      <button
+        class="weekly-day-header ${classMap({
+          'current-day': this._config!.highlight_current_day !== false && day === getCurrentDay(),
+          'copy-source': day === this._selectedDay,
+          error: this._hasErrorForDay(day),
+        })}"
+        style="grid-row: ${row}; grid-column: ${column}"
+        aria-pressed=${day === this._selectedDay ? 'true' : 'false'}
+        @click=${() => { this._selectedDay = day; }}
+      >
+        ${DAY_LABELS[day]}
+      </button>
+    `;
+  }
+
+  private _renderWeeklyCell(
+    day: DayKey,
+    slotIndex: number,
+    row: number,
+    column: number,
+    ctx: WeeklyCellContext
+  ): TemplateResult {
+    const schedule = ctx.schedules.get(day) ?? null;
+    const active = schedule?.slots[slotIndex] ?? false;
+    const isCurrentSlotHighlight =
+      this._config?.highlight_current_slot !== false &&
+      day === ctx.currentDay &&
+      slotIndex === ctx.currentSlot;
+    const cellLabel = active
+      ? this._config?.active_label ?? 'On'
+      : this._config?.inactive_label ?? 'Off';
+    const textColor = active
+      ? this._config?.active_text_color ?? '#ffffff'
+      : this._config?.inactive_text_color ?? '#212121';
+    const icon = active
+      ? this._config?.active_icon ?? 'mdi:weather-sunny'
+      : this._config?.inactive_icon ?? 'mdi:weather-night';
+    const disabled = !ctx.editable || !schedule;
+
+    return html`
+      <button
+        class="weekly-cell ${classMap({
+          active,
+          inactive: !active,
+          'hour-end': slotIndex % 2 === 1,
+          'current-slot': isCurrentSlotHighlight,
+          readonly: disabled,
+        })}"
+        style=${styleMap({
+          gridRow: String(row),
+          gridColumn: String(column),
+          backgroundColor: active ? ctx.activeColor : ctx.inactiveColor,
+          color: textColor,
+        })}
+        title="${DAY_LABELS[day]} ${slotToTime(slotIndex)} - ${active ? 'Active' : 'Inactive'}"
+        ?disabled=${disabled}
+        @click=${() => schedule && this._handleCellClick(day, slotIndex)}
+      >${ctx.showLabels || ctx.showIcons
+        ? html`<span class="weekly-cell-content">
+            ${ctx.showIcons ? html`<ha-icon .icon=${icon}></ha-icon>` : nothing}
+            ${ctx.showLabels ? html`<span>${cellLabel}</span>` : nothing}
+          </span>`
+        : nothing}</button>
     `;
   }
 
